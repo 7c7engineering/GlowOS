@@ -16,6 +16,7 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
+#include "glow_storage.h"
 #include "glow_web.h"
 
 static const char *TAG = "GLOW_WEB";
@@ -35,84 +36,10 @@ extern glow_context_t *g_context;
 static const uint8_t s_ap_ip[4] = {192, 168, 4, 1};
 static httpd_handle_t s_http_server;
 static bool s_initialized;
+static bool s_manual_mode;
 
-static const char s_index_html[] =
-	"<!doctype html><html><head><meta charset=\"utf-8\">"
-	"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-	"<title>GlowOS</title>"
-	"<style>body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;padding:24px;color:#222;}"
-	".card{max-width:720px;margin:0 auto;background:#fff;padding:24px;border-radius:12px;"
-	"box-shadow:0 8px 24px rgba(0,0,0,.08);}h1{margin-top:0;}code{background:#eef2f6;padding:2px 6px;"
-	"border-radius:6px;}label{display:block;margin-top:12px;}input[type=range]{width:100%;}"
-	".swatch{height:56px;border-radius:10px;margin-top:14px;border:1px solid #d9e1e8;}"
-	"button{margin-top:16px;padding:10px 16px;border:0;border-radius:8px;background:#0b6efd;color:#fff;font-weight:700;}"
-	".row{display:flex;gap:8px;align-items:center;margin-top:10px;}"
-	"input[type=number]{width:120px;padding:8px;border:1px solid #c9d3dd;border-radius:8px;}"
-	".status{margin-top:10px;color:#4a5560;font-size:14px;}</style></head><body><div class=\"card\"><h1>GlowOS Captive Portal</h1>"
-	"<p>Web interface is running.</p><p>Next step: connect control endpoints and queues.</p>"
-	"<p>AP IP: <code>192.168.4.1</code></p>"
-	"<h2>LED Control</h2>"
-	"<label>Red: <span id=\"rv\">0</span><input id=\"r\" type=\"range\" min=\"0\" max=\"255\" value=\"0\"></label>"
-	"<label>Green: <span id=\"gv\">0</span><input id=\"g\" type=\"range\" min=\"0\" max=\"255\" value=\"0\"></label>"
-	"<label>Blue: <span id=\"bv\">127</span><input id=\"b\" type=\"range\" min=\"0\" max=\"255\" value=\"127\"></label>"
-	"<div class=\"swatch\" id=\"sw\"></div>"
-	"<button id=\"send\">Set LED</button>"
-	"<div class=\"status\" id=\"st\">LED: Idle</div>"
-	"<h2>Power</h2>"
-	"<div class=\"row\"><button id=\"pon\">POWER ON</button><button id=\"poff\">POWER OFF</button></div>"
-	"<div class=\"status\" id=\"stp\">Power: Idle</div>"
-	"<h2>Voltage</h2>"
-	"<div class=\"row\"><label for=\"v\" style=\"display:inline\">Voltage (V)</label><input id=\"v\" type=\"number\" step=\"0.05\" min=\"0\" max=\"5.5\" value=\"2.0\"></div>"
-	"<button id=\"sendv\">Set Voltage</button>"
-	"<div class=\"status\" id=\"stv\">Voltage: Idle</div>"
-	"<h2>Measurements</h2>"
-	"<div class=\"status\" id=\"sm\">Waiting for data...</div>"
-	"<div class=\"row\"><code id=\"mvout\">Vout: -- mV</code></div>"
-	"<div class=\"row\"><code id=\"miout\">Iout: -- mA</code></div>"
-	"<div class=\"row\"><code id=\"mvbus\">VBUS: -- mV</code></div>"
-	"<div class=\"row\"><code id=\"mvbat\">VBAT: -- mV</code></div>"
-	"<script>"
-	"const r=document.getElementById('r'),g=document.getElementById('g'),b=document.getElementById('b');"
-	"const rv=document.getElementById('rv'),gv=document.getElementById('gv'),bv=document.getElementById('bv');"
-	"const sw=document.getElementById('sw'),st=document.getElementById('st');"
-	"const stp=document.getElementById('stp');"
-	"const v=document.getElementById('v'),stv=document.getElementById('stv');"
-	"const sm=document.getElementById('sm');"
-	"const mvout=document.getElementById('mvout'),miout=document.getElementById('miout');"
-	"const mvbus=document.getElementById('mvbus'),mvbat=document.getElementById('mvbat');"
-	"function upd(){rv.textContent=r.value;gv.textContent=g.value;bv.textContent=b.value;sw.style.background='rgb('+r.value+','+g.value+','+b.value+')';}"
-	"r.oninput=upd;g.oninput=upd;b.oninput=upd;upd();"
-	"document.getElementById('send').onclick=async()=>{"
-	"st.textContent='Sending...';"
-	"try{const u='/api/led?r='+r.value+'&g='+g.value+'&b='+b.value;const res=await fetch(u);"
-	"st.textContent=res.ok?'LED command queued':'Failed: '+res.status;}"
-	"catch(e){st.textContent='Request error';}};"
-	"document.getElementById('pon').onclick=async()=>{"
-	"stp.textContent='Sending...';"
-	"try{const res=await fetch('/api/power?en=1');"
-	"stp.textContent=res.ok?'Power ON command queued':'Failed: '+res.status;}"
-	"catch(e){stp.textContent='Request error';}};"
-	"document.getElementById('poff').onclick=async()=>{"
-	"stp.textContent='Sending...';"
-	"try{const res=await fetch('/api/power?en=0');"
-	"stp.textContent=res.ok?'Power OFF command queued':'Failed: '+res.status;}"
-	"catch(e){stp.textContent='Request error';}};"
-	"document.getElementById('sendv').onclick=async()=>{"
-	"stv.textContent='Sending...';"
-	"try{const u='/api/voltage?v='+encodeURIComponent(v.value);const res=await fetch(u);"
-	"stv.textContent=res.ok?'Voltage command queued':'Failed: '+res.status;}"
-	"catch(e){stv.textContent='Request error';}};"
-	"async function refreshMeasurements(){"
-	"try{const res=await fetch('/api/measurement');if(!res.ok){sm.textContent='Measurement API unavailable: '+res.status;return;}"
-	"const d=await res.json();"
-	"mvout.textContent='Vout: '+d.vout_mV+' mV';"
-	"miout.textContent='Iout: '+d.iout_mA+' mA';"
-	"mvbus.textContent='VBUS: '+d.vbus_mV+' mV';"
-	"mvbat.textContent='VBAT: '+d.vbat_mV+' mV';"
-	"sm.textContent='Updated: '+new Date().toLocaleTimeString();}"
-	"catch(e){sm.textContent='Measurement request error';}}"
-	"refreshMeasurements();setInterval(refreshMeasurements,1000);"
-	"</script></div></body></html>";
+extern const uint8_t _binary_index_html_start[] asm("_binary_index_html_start");
+extern const uint8_t _binary_index_html_end[] asm("_binary_index_html_end");
 
 static esp_err_t web_send_control_command(httpd_req_t *req, const glow_command_t *cmd)
 {
@@ -244,10 +171,172 @@ static esp_err_t web_measurement_get_handler(httpd_req_t *req)
 	return httpd_resp_sendstr(req, response);
 }
 
+static esp_err_t web_live_get_handler(httpd_req_t *req)
+{
+	glow_measurement_t measurement = {0};
+	bool has_measurement = false;
+
+	if (g_context && g_context->measurement_queue) {
+		has_measurement = xQueuePeek(g_context->measurement_queue, &measurement, 0) == pdTRUE;
+	}
+
+	char response[240];
+	const char *system_state = s_manual_mode ? "RUNNING_MANUAL" : "RUNNING_AUTO";
+	const char *rc_measurement = "pending";
+
+	snprintf(
+		response,
+		sizeof(response),
+		"{\"ok\":true,\"system_state\":\"%s\",\"manual_mode\":%s,\"vout_mV\":%u,\"iout_mA\":%u,\"vbus_mV\":%u,\"vbat_mV\":%u,\"rc_measurement\":\"%s\"}",
+		system_state,
+		s_manual_mode ? "true" : "false",
+		(unsigned)(has_measurement ? measurement.vout_mV : 0),
+		(unsigned)(has_measurement ? measurement.iout_mA : 0),
+		(unsigned)(has_measurement ? measurement.vbus_mV : 0),
+		(unsigned)(has_measurement ? measurement.vbat_mV : 0),
+		rc_measurement
+	);
+
+	httpd_resp_set_type(req, "application/json");
+	return httpd_resp_sendstr(req, response);
+}
+
+static esp_err_t web_mode_set_handler(httpd_req_t *req)
+{
+	char query[64] = {0};
+	char manual_str[8] = {0};
+
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+		httpd_query_key_value(query, "manual", manual_str, sizeof(manual_str)) != ESP_OK) {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"missing_query_params\"}");
+	}
+
+	int manual = atoi(manual_str);
+	if (manual != 0 && manual != 1) {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid_manual_value\"}");
+	}
+
+	s_manual_mode = manual != 0;
+	httpd_resp_set_type(req, "application/json");
+	return httpd_resp_sendstr(req, s_manual_mode ? "{\"ok\":true,\"manual_mode\":true}" : "{\"ok\":true,\"manual_mode\":false}");
+}
+
+static esp_err_t web_settings_load_handler(httpd_req_t *req)
+{
+	glow_settings_t settings = {0};
+	esp_err_t err = glow_storage_get_settings(&settings);
+	if (err != ESP_OK) {
+		httpd_resp_set_status(req, "500 Internal Server Error");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"settings_not_available\"}");
+	}
+
+	char response[256];
+	if (settings.cell_count == GLOW_SETTINGS_CELL_COUNT_AUTO) {
+		snprintf(
+			response,
+			sizeof(response),
+			"{\"ok\":true,\"led_count\":%u,\"battery_low_warning_v\":%.3f,\"battery_low_cutoff_v\":%.3f,\"cell_count_auto\":true,\"cell_count\":%u}",
+			(unsigned)settings.led_count,
+			(double)settings.battery_low_warning_v,
+			(double)settings.battery_low_cutoff_v,
+			(unsigned)GLOW_SETTINGS_CELL_COUNT_MIN
+		);
+	} else {
+		snprintf(
+			response,
+			sizeof(response),
+			"{\"ok\":true,\"led_count\":%u,\"battery_low_warning_v\":%.3f,\"battery_low_cutoff_v\":%.3f,\"cell_count_auto\":false,\"cell_count\":%u}",
+			(unsigned)settings.led_count,
+			(double)settings.battery_low_warning_v,
+			(double)settings.battery_low_cutoff_v,
+			(unsigned)settings.cell_count
+		);
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	return httpd_resp_sendstr(req, response);
+}
+
+static esp_err_t web_settings_save_handler(httpd_req_t *req)
+{
+	char query[256] = {0};
+	char led_count_str[16] = {0};
+	char warning_str[24] = {0};
+	char cutoff_str[24] = {0};
+	char cell_count_str[24] = {0};
+	char *endptr = NULL;
+
+	if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+		httpd_query_key_value(query, "led_count", led_count_str, sizeof(led_count_str)) != ESP_OK ||
+		httpd_query_key_value(query, "battery_low_warning_v", warning_str, sizeof(warning_str)) != ESP_OK ||
+		httpd_query_key_value(query, "battery_low_cutoff_v", cutoff_str, sizeof(cutoff_str)) != ESP_OK ||
+		httpd_query_key_value(query, "cell_count", cell_count_str, sizeof(cell_count_str)) != ESP_OK) {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"missing_query_params\"}");
+	}
+
+	endptr = NULL;
+	long led_count = strtol(led_count_str, &endptr, 10);
+	if (endptr == led_count_str || *endptr != '\0') {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid_led_count\"}");
+	}
+
+	endptr = NULL;
+	float warning_v = strtof(warning_str, &endptr);
+	if (endptr == warning_str || *endptr != '\0') {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid_warning_voltage\"}");
+	}
+
+	endptr = NULL;
+	float cutoff_v = strtof(cutoff_str, &endptr);
+	if (endptr == cutoff_str || *endptr != '\0') {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid_cutoff_voltage\"}");
+	}
+
+	uint8_t cell_count = GLOW_SETTINGS_CELL_COUNT_AUTO;
+	if (strcmp(cell_count_str, "auto") != 0) {
+		endptr = NULL;
+		long cell_count_num = strtol(cell_count_str, &endptr, 10);
+		if (endptr == cell_count_str || *endptr != '\0') {
+			httpd_resp_set_status(req, "400 Bad Request");
+			httpd_resp_set_type(req, "application/json");
+			return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid_cell_count\"}");
+		}
+		cell_count = (uint8_t)cell_count_num;
+	}
+
+	glow_settings_t settings = {
+		.led_count = (uint8_t)led_count,
+		.battery_low_warning_v = warning_v,
+		.battery_low_cutoff_v = cutoff_v,
+		.cell_count = cell_count,
+	};
+
+	ESP_RETURN_ON_ERROR(glow_storage_set_settings(&settings), TAG, "Failed to set settings");
+	ESP_RETURN_ON_ERROR(glow_storage_save_settings(), TAG, "Failed to save settings");
+
+	httpd_resp_set_type(req, "application/json");
+	return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
 static esp_err_t web_root_get_handler(httpd_req_t *req)
 {
 	httpd_resp_set_type(req, "text/html");
-	return httpd_resp_send(req, s_index_html, HTTPD_RESP_USE_STRLEN);
+	const char *html = (const char *)_binary_index_html_start;
+	const size_t html_len = (size_t)(_binary_index_html_end - _binary_index_html_start);
+	return httpd_resp_send(req, html, html_len);
 }
 
 static esp_err_t web_captive_get_handler(httpd_req_t *req)
@@ -265,6 +354,7 @@ static esp_err_t web_start_http_server(void)
 {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.uri_match_fn = httpd_uri_match_wildcard;
+	config.max_uri_handlers = 12;
 
 	esp_err_t err = httpd_start(&s_http_server, &config);
 	if (err != ESP_OK) {
@@ -302,6 +392,30 @@ static esp_err_t web_start_http_server(void)
 		.handler = web_measurement_get_handler,
 		.user_ctx = NULL,
 	};
+	const httpd_uri_t live_uri = {
+		.uri = "/api/live",
+		.method = HTTP_GET,
+		.handler = web_live_get_handler,
+		.user_ctx = NULL,
+	};
+	const httpd_uri_t mode_uri = {
+		.uri = "/api/mode",
+		.method = HTTP_GET,
+		.handler = web_mode_set_handler,
+		.user_ctx = NULL,
+	};
+	const httpd_uri_t settings_load_uri = {
+		.uri = "/api/settings/load",
+		.method = HTTP_GET,
+		.handler = web_settings_load_handler,
+		.user_ctx = NULL,
+	};
+	const httpd_uri_t settings_save_uri = {
+		.uri = "/api/settings/save",
+		.method = HTTP_GET,
+		.handler = web_settings_save_handler,
+		.user_ctx = NULL,
+	};
 
 	err = httpd_register_uri_handler(s_http_server, &led_uri);
 	if (err != ESP_OK) {
@@ -327,6 +441,34 @@ static esp_err_t web_start_http_server(void)
 	err = httpd_register_uri_handler(s_http_server, &measurement_uri);
 	if (err != ESP_OK) {
 		ESP_LOGE(TAG, "Failed to register measurement API handler: %s", esp_err_to_name(err));
+		httpd_stop(s_http_server);
+		s_http_server = NULL;
+		return err;
+	}
+	err = httpd_register_uri_handler(s_http_server, &live_uri);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Failed to register live API handler: %s", esp_err_to_name(err));
+		httpd_stop(s_http_server);
+		s_http_server = NULL;
+		return err;
+	}
+	err = httpd_register_uri_handler(s_http_server, &mode_uri);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Failed to register mode API handler: %s", esp_err_to_name(err));
+		httpd_stop(s_http_server);
+		s_http_server = NULL;
+		return err;
+	}
+	err = httpd_register_uri_handler(s_http_server, &settings_load_uri);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Failed to register settings load API handler: %s", esp_err_to_name(err));
+		httpd_stop(s_http_server);
+		s_http_server = NULL;
+		return err;
+	}
+	err = httpd_register_uri_handler(s_http_server, &settings_save_uri);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Failed to register settings save API handler: %s", esp_err_to_name(err));
 		httpd_stop(s_http_server);
 		s_http_server = NULL;
 		return err;

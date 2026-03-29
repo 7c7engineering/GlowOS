@@ -4,6 +4,7 @@
 #include "glow_led.h"
 #include "glow_power.h"
 #include "glow_web.h"
+#include "glow_storage.h"
 #include "esp_check.h"
 
 #include "freertos/FreeRTOS.h"
@@ -21,16 +22,18 @@ void app_main(void)
 {
 
     esp_err_t err = nvs_flash_init();
-	if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-		nvs_flash_erase();
-		nvs_flash_init();
-	} else {
-		ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
-	}
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
+        return;
+    }
     esp_event_loop_create_default();
     glow_context_init();
     glow_led_init();
     glow_power_init();
+    glow_storage_init();
 
     vTaskDelay(5000 / portTICK_PERIOD_MS);
     glow_web_init();
