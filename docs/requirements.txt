@@ -1,0 +1,6 @@
+pandas
+plotly
+nbformat
+scipy
+numpy
+esptool

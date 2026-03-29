@@ -3,7 +3,7 @@
   "idf.openOcdConfigs": [
     "board/esp32c3-builtin.cfg"
   ],
-  "idf.port": "detect",
+  "idf.port": "/dev/tty.usbmodem1101",
   "idf.currentSetup": "/Users/max/.espressif/v6.0/esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c3"
@@ -13,5 +13,7 @@
     "--background-index",
     "--query-driver=**",
     "--compile-commands-dir=/Users/max/GIT/7PS/GlowOS/GlowOS/build"
-  ]
+  ],
+  "idf.flashType": "UART",
+  "python-envs.defaultEnvManager": "ms-python.python:venv"
 }
