@@ -34,6 +34,7 @@ extern glow_context_t *g_context;
 
 #define DNS_PORT                    53
 #define DNS_PACKET_SIZE             512
+#define WEB_CONFIG_JSON_MAX_LEN     1024
 
 static const uint8_t s_ap_ip[4] = {192, 168, 4, 1};
 static httpd_handle_t s_http_server;
@@ -58,6 +59,25 @@ static esp_err_t web_send_control_command(httpd_req_t *req, const glow_command_t
 
 	httpd_resp_set_type(req, "application/json");
 	return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static esp_err_t web_read_request_body(httpd_req_t *req, char *buffer, size_t buffer_size)
+{
+	if (req->content_len <= 0 || (size_t)req->content_len >= buffer_size) {
+		return ESP_ERR_INVALID_SIZE;
+	}
+
+	int total = 0;
+	while (total < req->content_len) {
+		int ret = httpd_req_recv(req, buffer + total, req->content_len - total);
+		if (ret <= 0) {
+			return ESP_FAIL;
+		}
+		total += ret;
+	}
+
+	buffer[total] = '\0';
+	return ESP_OK;
 }
 
 static esp_err_t web_led_set_handler(httpd_req_t *req)
@@ -147,11 +167,17 @@ static esp_err_t web_voltage_set_handler(httpd_req_t *req)
 
 static esp_err_t web_measurement_get_handler(httpd_req_t *req)
 {
+	if (!g_context || !g_context->measurement_mutex) {
+		httpd_resp_set_status(req, "503 Service Unavailable");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"measurement_not_ready\"}");
+	}
+
 	bool measurement_available = false;
 	if (xSemaphoreTake(g_context->measurement_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
 		measurement_available = true;
 	}
-	if (!g_context || !measurement_available) {
+	if (!measurement_available) {
 		httpd_resp_set_status(req, "503 Service Unavailable");
 		httpd_resp_set_type(req, "application/json");
 		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"measurement_queue_not_ready\"}");
@@ -170,9 +196,15 @@ static esp_err_t web_measurement_get_handler(httpd_req_t *req)
 
 static esp_err_t web_live_get_handler(httpd_req_t *req)
 {
+	if (!g_context || !g_context->measurement_mutex || !g_context->system_status) {
+		httpd_resp_set_status(req, "503 Service Unavailable");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"context_not_ready\"}");
+	}
+
 	bool has_measurement = false;
 	// Wait for the measurement mutex to not display half-formed data, but don't block if it's currently locked (e.g. during a measurement update)
-	if (xSemaphoreTake(g_context->measurement_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {		has_measurement = true;
+	if (xSemaphoreTake(g_context->measurement_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
 		has_measurement = true;
 	}
 
@@ -335,6 +367,41 @@ static esp_err_t web_settings_save_handler(httpd_req_t *req)
 	return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+static esp_err_t web_config_get_handler(httpd_req_t *req)
+{
+	char json[WEB_CONFIG_JSON_MAX_LEN] = {0};
+	esp_err_t err = glow_storage_get_config_json(json, sizeof(json));
+	if (err != ESP_OK) {
+		httpd_resp_set_status(req, "500 Internal Server Error");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"config_not_available\"}");
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	return httpd_resp_sendstr(req, json);
+}
+
+static esp_err_t web_config_post_handler(httpd_req_t *req)
+{
+	char json[WEB_CONFIG_JSON_MAX_LEN] = {0};
+	esp_err_t read_err = web_read_request_body(req, json, sizeof(json));
+	if (read_err != ESP_OK) {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid_request_body\"}");
+	}
+
+	esp_err_t save_err = glow_storage_set_config_json(json);
+	if (save_err != ESP_OK) {
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_set_type(req, "application/json");
+		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"config_validation_failed\"}");
+	}
+
+	httpd_resp_set_type(req, "application/json");
+	return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
 static esp_err_t web_root_get_handler(httpd_req_t *req)
 {
 	httpd_resp_set_type(req, "text/html");
@@ -358,7 +425,7 @@ static esp_err_t web_start_http_server(void)
 {
 	httpd_config_t config = HTTPD_DEFAULT_CONFIG();
 	config.uri_match_fn = httpd_uri_match_wildcard;
-	config.max_uri_handlers = 12;
+	config.max_uri_handlers = 16;
 
 	esp_err_t err = httpd_start(&s_http_server, &config);
 	if (err != ESP_OK) {
@@ -420,6 +487,18 @@ static esp_err_t web_start_http_server(void)
 		.handler = web_settings_save_handler,
 		.user_ctx = NULL,
 	};
+	const httpd_uri_t config_get_uri = {
+		.uri = "/api/config",
+		.method = HTTP_GET,
+		.handler = web_config_get_handler,
+		.user_ctx = NULL,
+	};
+	const httpd_uri_t config_post_uri = {
+		.uri = "/api/config",
+		.method = HTTP_POST,
+		.handler = web_config_post_handler,
+		.user_ctx = NULL,
+	};
 
 	err = httpd_register_uri_handler(s_http_server, &led_uri);
 	if (err != ESP_OK) {
@@ -473,6 +552,20 @@ static esp_err_t web_start_http_server(void)
 	err = httpd_register_uri_handler(s_http_server, &settings_save_uri);
 	if (err != ESP_OK) {
 		ESP_LOGE(TAG, "Failed to register settings save API handler: %s", esp_err_to_name(err));
+		httpd_stop(s_http_server);
+		s_http_server = NULL;
+		return err;
+	}
+	err = httpd_register_uri_handler(s_http_server, &config_get_uri);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Failed to register config GET API handler: %s", esp_err_to_name(err));
+		httpd_stop(s_http_server);
+		s_http_server = NULL;
+		return err;
+	}
+	err = httpd_register_uri_handler(s_http_server, &config_post_uri);
+	if (err != ESP_OK) {
+		ESP_LOGE(TAG, "Failed to register config POST API handler: %s", esp_err_to_name(err));
 		httpd_stop(s_http_server);
 		s_http_server = NULL;
 		return err;

@@ -1,0 +1,21 @@
+{
+    "battery": {
+        "ncells": 0,
+        "low_voltage": 3.2,
+        "crit_voltage": 3.0
+    },
+    "leds": {
+        "num_leds": 2,
+        "brightness": 0.5
+    },
+    "glow": {
+        "voltage": 2.0,
+        "boost": 2.3,
+        "boost_time": 1.5
+    },
+    "receiver": {
+        "type": "PPM",
+        "failsafe_timeout": 0.5,
+        "threshold": 50
+    }
+}

@@ -2,6 +2,7 @@
 #define GLOW_STORAGE_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include "esp_err.h"
 
 #define GLOW_SETTINGS_CELL_COUNT_AUTO 0
@@ -34,5 +35,7 @@ esp_err_t glow_storage_get_settings(glow_settings_t *out_settings);
 esp_err_t glow_storage_set_settings(const glow_settings_t *settings);
 esp_err_t glow_storage_save_settings(void);
 esp_err_t glow_storage_reset_settings(void);
+esp_err_t glow_storage_get_config_json(char *out_json, size_t out_size);
+esp_err_t glow_storage_set_config_json(const char *json);
 
 #endif // GLOW_STORAGE_H

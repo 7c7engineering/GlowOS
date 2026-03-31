@@ -185,26 +185,63 @@
       <section class="panel active" id="settingsPanel">
         <div class="grid">
           <div class="field">
-            <label for="ledCount">Number of LEDs</label>
-            <input id="ledCount" type="number" min="0" max="5" step="1">
-          </div>
-          <div class="field">
-            <label for="batWarn">Battery low warning (V)</label>
-            <input id="batWarn" type="number" min="2.5" max="3.7" step="0.01">
-          </div>
-          <div class="field">
-            <label for="batCut">Battery cutoff (V)</label>
-            <input id="batCut" type="number" min="2.5" max="3.5" step="0.01">
-          </div>
-          <div class="field">
-            <label for="cellCount">Number of cells</label>
-            <select id="cellCount">
-              <option value="auto">Auto</option>
+            <label for="batteryCells">Battery Cells</label>
+            <select id="batteryCells">
+              <option value="0">Auto</option>
               <option value="2">2</option>
               <option value="3">3</option>
               <option value="4">4</option>
               <option value="5">5</option>
             </select>
+          </div>
+          <div class="field">
+            <label for="batteryLowVoltage">Battery Low Voltage (V)</label>
+            <input id="batteryLowVoltage" type="number" min="2.5" max="3.7" step="0.01">
+          </div>
+          <div class="field">
+            <label for="batteryCritVoltage">Battery Critical Voltage (V)</label>
+            <input id="batteryCritVoltage" type="number" min="2.5" max="3.5" step="0.01">
+          </div>
+          <div class="field">
+            <label for="ledNumLeds">Number of LEDs</label>
+            <input id="ledNumLeds" type="number" min="0" max="5" step="1">
+          </div>
+          <div class="field">
+            <label for="ledBrightness">LED Brightness (0..1)</label>
+            <input id="ledBrightness" type="number" min="0" max="1" step="0.01">
+          </div>
+          <div class="field">
+            <label for="glowVoltage">Glow Voltage (V)</label>
+            <input id="glowVoltage" type="number" min="0" max="5.5" step="0.01">
+          </div>
+          <div class="field">
+            <label for="glowBoost">Glow Boost (V)</label>
+            <input id="glowBoost" type="number" min="0" max="6.0" step="0.01">
+          </div>
+          <div class="field">
+            <label for="glowBoostTime">Glow Boost Time (s)</label>
+            <input id="glowBoostTime" type="number" min="0" max="10" step="0.1">
+          </div>
+          <div class="field">
+            <label for="receiverType">Receiver Type</label>
+            <select id="receiverType">
+              <option value="PPM">PPM</option>
+              <option value="SBUS">SBUS</option>
+              <option value="IBUS">IBUS</option>
+              <option value="CRSF">CRSF</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="receiverFailsafeTimeout">Failsafe Timeout (s)</label>
+            <input id="receiverFailsafeTimeout" type="number" min="0.1" max="5" step="0.1">
+          </div>
+          <div class="field">
+            <label for="receiverThreshold">Receiver Threshold</label>
+            <input id="receiverThreshold" type="number" min="0" max="100" step="1">
+          </div>
+          <div class="field" style="grid-column:1/-1;">
+            <label for="configPreview">JSON Preview</label>
+            <textarea id="configPreview" rows="10" readonly style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 11px;font-size:13px;background:#fff;color:var(--ink);"></textarea>
           </div>
         </div>
         <div class="actions">
@@ -338,20 +375,57 @@
       }
     });
 
+    function getConfigFromForm() {
+      return {
+        battery: {
+          ncells: Number(qs('#batteryCells').value),
+          low_voltage: Number(qs('#batteryLowVoltage').value),
+          crit_voltage: Number(qs('#batteryCritVoltage').value),
+        },
+        leds: {
+          num_leds: Number(qs('#ledNumLeds').value),
+          brightness: Number(qs('#ledBrightness').value),
+        },
+        glow: {
+          voltage: Number(qs('#glowVoltage').value),
+          boost: Number(qs('#glowBoost').value),
+          boost_time: Number(qs('#glowBoostTime').value),
+        },
+        receiver: {
+          type: qs('#receiverType').value,
+          failsafe_timeout: Number(qs('#receiverFailsafeTimeout').value),
+          threshold: Number(qs('#receiverThreshold').value),
+        },
+      };
+    }
+
+    function setFormFromConfig(config) {
+      qs('#batteryCells').value = String(config.battery.ncells);
+      qs('#batteryLowVoltage').value = Number(config.battery.low_voltage).toFixed(2);
+      qs('#batteryCritVoltage').value = Number(config.battery.crit_voltage).toFixed(2);
+      qs('#ledNumLeds').value = String(config.leds.num_leds);
+      qs('#ledBrightness').value = Number(config.leds.brightness).toFixed(2);
+      qs('#glowVoltage').value = Number(config.glow.voltage).toFixed(2);
+      qs('#glowBoost').value = Number(config.glow.boost).toFixed(2);
+      qs('#glowBoostTime').value = Number(config.glow.boost_time).toFixed(1);
+      qs('#receiverType').value = config.receiver.type;
+      qs('#receiverFailsafeTimeout').value = Number(config.receiver.failsafe_timeout).toFixed(1);
+      qs('#receiverThreshold').value = String(config.receiver.threshold);
+    }
+
+    function updateConfigPreview() {
+      const config = getConfigFromForm();
+      qs('#configPreview').value = JSON.stringify(config, null, 2);
+    }
+
     async function loadSettings() {
       qs('#settingsStatus').textContent = 'Loading settings...';
       try {
-        const res = await fetch('/api/settings/load');
+        const res = await fetch('/api/config');
         if (!res.ok) throw new Error(String(res.status));
-        const d = await res.json();
-        qs('#ledCount').value = d.led_count;
-        qs('#batWarn').value = d.battery_low_warning_v.toFixed(2);
-        qs('#batCut').value = d.battery_low_cutoff_v.toFixed(2);
-        if (d.cell_count_auto) {
-          qs('#cellCount').value = 'auto';
-        } else {
-          qs('#cellCount').value = String(d.cell_count);
-        }
+        const config = await res.json();
+        setFormFromConfig(config);
+        updateConfigPreview();
         qs('#settingsStatus').textContent = 'Settings loaded.';
       } catch (e) {
         qs('#settingsStatus').textContent = 'Load failed';
@@ -360,14 +434,14 @@
 
     async function saveSettings() {
       qs('#settingsStatus').textContent = 'Saving settings...';
-      const cell = qs('#cellCount').value;
-      const q =
-        '?led_count=' + encodeURIComponent(qs('#ledCount').value) +
-        '&battery_low_warning_v=' + encodeURIComponent(qs('#batWarn').value) +
-        '&battery_low_cutoff_v=' + encodeURIComponent(qs('#batCut').value) +
-        '&cell_count=' + encodeURIComponent(cell);
+      const configJson = JSON.stringify(getConfigFromForm());
+      updateConfigPreview();
       try {
-        const res = await fetch('/api/settings/save' + q);
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: configJson,
+        });
         if (!res.ok) throw new Error(String(res.status));
         await loadSettings();
         qs('#settingsStatus').textContent = 'Settings saved.';
@@ -378,6 +452,9 @@
 
     qs('#loadSettings').addEventListener('click', loadSettings);
     qs('#saveSettings').addEventListener('click', saveSettings);
+
+    ['#batteryCells', '#batteryLowVoltage', '#batteryCritVoltage', '#ledNumLeds', '#ledBrightness', '#glowVoltage', '#glowBoost', '#glowBoostTime', '#receiverType', '#receiverFailsafeTimeout', '#receiverThreshold']
+      .forEach((id) => qs(id).addEventListener('input', updateConfigPreview));
 
     async function refreshLive() {
       try {
@@ -399,6 +476,7 @@
 
     refreshSwatch();
     setModeButtons();
+    updateConfigPreview();
     loadSettings();
     refreshLive();
     setInterval(refreshLive, 1000);
