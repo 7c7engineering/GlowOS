@@ -15,5 +15,35 @@
     "--compile-commands-dir=/Users/max/GIT/7PS/GlowOS/GlowOS/build"
   ],
   "idf.flashType": "UART",
-  "python-envs.defaultEnvManager": "ms-python.python:venv"
+  "python-envs.defaultEnvManager": "ms-python.python:venv",
+  "sqltools.connections": [
+    {
+      "mysqlOptions": {
+        "authProtocol": "default",
+        "enableSsl": "Disabled"
+      },
+      "ssh": "Disabled",
+      "previewLimit": 50,
+      "server": "vps.7c7engineering.com",
+      "port": 3306,
+      "driver": "MariaDB",
+      "name": "ATLAS",
+      "database": "teststand_db",
+      "username": "admin"
+    },
+    {
+      "mysqlOptions": {
+        "authProtocol": "default",
+        "enableSsl": "Disabled"
+      },
+      "ssh": "Disabled",
+      "previewLimit": 50,
+      "server": "vps.7c7engineering.com",
+      "port": 3306,
+      "driver": "MariaDB",
+      "name": "ATLAS_root",
+      "database": "teststand_db",
+      "username": "root"
+    }
+  ]
 }

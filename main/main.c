@@ -6,9 +6,12 @@
 #include "glow_web.h"
 #include "glow_storage.h"
 #include "esp_check.h"
+#include "glow_sensors.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -34,14 +37,9 @@ void app_main(void)
     glow_led_init();
     glow_power_init();
     glow_storage_init();
-
+    glow_sensors_init();
     vTaskDelay(5000 / portTICK_PERIOD_MS);
     glow_web_init();
-
-    uint32_t vout_mV = 0;
-    uint32_t iout_mA = 0;
-    uint32_t vbus_mV = 0;
-    uint32_t vbat_mV = 0;
 
     while(1)
     {
@@ -69,23 +67,5 @@ void app_main(void)
                     break;
             }
         }
-
-        // Perform periodic measurements
-        glow_power_get_vout_mV(&vout_mV);
-        glow_power_get_iout_mA(&iout_mA);
-        glow_power_get_vbus_mV(&vbus_mV);
-        glow_power_get_vbat_mV(&vbat_mV);
-        
-        // Add measurements to the queue, overwrite if full
-        glow_measurement_t measurement = {
-            .vout_mV = vout_mV,
-            .iout_mA = iout_mA,
-            .vbus_mV = vbus_mV,
-            .vbat_mV = vbat_mV,
-        };
-        xQueueOverwrite(g_context->measurement_queue, &measurement);
-        ESP_LOGI(TAG, "Measured Vout: %d mV, Iout: %d mA, VBUS: %d mV, VBAT: %d mV", vout_mV, iout_mA, vbus_mV, vbat_mV);
-
-
     }
 }

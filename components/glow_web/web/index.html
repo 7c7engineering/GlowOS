@@ -126,6 +126,29 @@
       margin-top: 10px;
     }
 
+    .color-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    input[type=color] {
+      width: 56px;
+      height: 40px;
+      padding: 2px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 13px;
+      opacity: .8;
+    }
+
     .status { margin-top: 10px; font-size: 13px; opacity: .78; }
 
     input[type=range] { width: 100%; }
@@ -174,15 +197,14 @@
             <input id="batCut" type="number" min="2.5" max="3.5" step="0.01">
           </div>
           <div class="field">
-            <label for="cellMode">Cell mode</label>
-            <select id="cellMode">
-              <option value="auto">Auto</option>
-              <option value="manual">Manual</option>
-            </select>
-          </div>
-          <div class="field">
             <label for="cellCount">Number of cells</label>
-            <input id="cellCount" type="number" min="2" max="5" step="1">
+            <select id="cellCount">
+              <option value="auto">Auto</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+            </select>
           </div>
         </div>
         <div class="actions">
@@ -201,9 +223,10 @@
         <div class="grid">
           <div>
             <label>LED color</label>
-            <input id="ledR" type="range" min="0" max="255" value="0">
-            <input id="ledG" type="range" min="0" max="255" value="0">
-            <input id="ledB" type="range" min="0" max="255" value="128">
+            <div class="color-row">
+              <input id="ledColor" type="color" value="#000080">
+              <span class="mono" id="ledHex">#000080</span>
+            </div>
             <div class="swatch" id="swatch"></div>
             <div class="actions"><button id="applyLed">Apply LED</button></div>
           </div>
@@ -236,21 +259,22 @@
 
     qsa('.tab').forEach((b) => b.addEventListener('click', () => tabSwitch(b.dataset.panel)));
 
-    function syncCellInput() {
-      const manual = qs('#cellMode').value === 'manual';
-      qs('#cellCount').disabled = !manual;
+    function hexToRgb(hex) {
+      const value = hex.replace('#', '');
+      return {
+        r: parseInt(value.slice(0, 2), 16),
+        g: parseInt(value.slice(2, 4), 16),
+        b: parseInt(value.slice(4, 6), 16),
+      };
     }
-
-    qs('#cellMode').addEventListener('change', syncCellInput);
 
     function refreshSwatch() {
-      const r = +qs('#ledR').value;
-      const g = +qs('#ledG').value;
-      const b = +qs('#ledB').value;
-      qs('#swatch').style.background = 'rgb(' + r + ',' + g + ',' + b + ')';
+      const hex = qs('#ledColor').value;
+      qs('#swatch').style.background = hex;
+      qs('#ledHex').textContent = hex.toUpperCase();
     }
 
-    ['#ledR', '#ledG', '#ledB'].forEach((id) => qs(id).addEventListener('input', refreshSwatch));
+    qs('#ledColor').addEventListener('input', refreshSwatch);
 
     function setModeButtons() {
       qs('#modeAuto').classList.toggle('active', !state.manual);
@@ -276,7 +300,8 @@
     qs('#applyLed').addEventListener('click', async () => {
       qs('#manualStatus').textContent = 'Sending LED command...';
       try {
-        const u = '/api/led?r=' + qs('#ledR').value + '&g=' + qs('#ledG').value + '&b=' + qs('#ledB').value;
+        const rgb = hexToRgb(qs('#ledColor').value);
+        const u = '/api/led?r=' + rgb.r + '&g=' + rgb.g + '&b=' + rgb.b;
         const res = await fetch(u);
         qs('#manualStatus').textContent = res.ok ? 'LED command queued' : 'LED command failed';
       } catch (e) {
@@ -323,13 +348,10 @@
         qs('#batWarn').value = d.battery_low_warning_v.toFixed(2);
         qs('#batCut').value = d.battery_low_cutoff_v.toFixed(2);
         if (d.cell_count_auto) {
-          qs('#cellMode').value = 'auto';
-          qs('#cellCount').value = 2;
+          qs('#cellCount').value = 'auto';
         } else {
-          qs('#cellMode').value = 'manual';
-          qs('#cellCount').value = d.cell_count;
+          qs('#cellCount').value = String(d.cell_count);
         }
-        syncCellInput();
         qs('#settingsStatus').textContent = 'Settings loaded.';
       } catch (e) {
         qs('#settingsStatus').textContent = 'Load failed';
@@ -338,7 +360,7 @@
 
     async function saveSettings() {
       qs('#settingsStatus').textContent = 'Saving settings...';
-      const cell = qs('#cellMode').value === 'auto' ? 'auto' : qs('#cellCount').value;
+      const cell = qs('#cellCount').value;
       const q =
         '?led_count=' + encodeURIComponent(qs('#ledCount').value) +
         '&battery_low_warning_v=' + encodeURIComponent(qs('#batWarn').value) +
@@ -375,7 +397,6 @@
       }
     }
 
-    syncCellInput();
     refreshSwatch();
     setModeButtons();
     loadSettings();

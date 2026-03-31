@@ -7,6 +7,8 @@
 #include "glow_context.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 
 #include "esp_check.h"
 #include "esp_event.h"
@@ -36,7 +38,6 @@ extern glow_context_t *g_context;
 static const uint8_t s_ap_ip[4] = {192, 168, 4, 1};
 static httpd_handle_t s_http_server;
 static bool s_initialized;
-static bool s_manual_mode;
 
 extern const uint8_t _binary_index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t _binary_index_html_end[] asm("_binary_index_html_end");
@@ -146,41 +147,37 @@ static esp_err_t web_voltage_set_handler(httpd_req_t *req)
 
 static esp_err_t web_measurement_get_handler(httpd_req_t *req)
 {
-	if (!g_context || !g_context->measurement_queue) {
+	bool measurement_available = false;
+	if (xSemaphoreTake(g_context->measurement_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+		measurement_available = true;
+	}
+	if (!g_context || !measurement_available) {
 		httpd_resp_set_status(req, "503 Service Unavailable");
 		httpd_resp_set_type(req, "application/json");
 		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"measurement_queue_not_ready\"}");
 	}
-
-	glow_measurement_t measurement = {0};
-	if (xQueuePeek(g_context->measurement_queue, &measurement, 0) != pdTRUE) {
-		httpd_resp_set_status(req, "503 Service Unavailable");
-		httpd_resp_set_type(req, "application/json");
-		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"no_measurement_available\"}");
-	}
-
 	char response[160];
 	snprintf(response, sizeof(response),
 		"{\"ok\":true,\"vout_mV\":%u,\"iout_mA\":%u,\"vbus_mV\":%u,\"vbat_mV\":%u}",
-		(unsigned)measurement.vout_mV,
-		(unsigned)measurement.iout_mA,
-		(unsigned)measurement.vbus_mV,
-		(unsigned)measurement.vbat_mV);
-
+		(unsigned)g_context->latest_measurement.vout_mV,
+		(unsigned)g_context->latest_measurement.iout_mA,
+		(unsigned)g_context->latest_measurement.vbus_mV,
+		(unsigned)g_context->latest_measurement.vbat_mV);
 	httpd_resp_set_type(req, "application/json");
+	xSemaphoreGive(g_context->measurement_mutex);
 	return httpd_resp_sendstr(req, response);
 }
 
 static esp_err_t web_live_get_handler(httpd_req_t *req)
 {
-	glow_measurement_t measurement = {0};
 	bool has_measurement = false;
-
-	if (g_context && g_context->measurement_queue) {
-		has_measurement = xQueuePeek(g_context->measurement_queue, &measurement, 0) == pdTRUE;
+	// Wait for the measurement mutex to not display half-formed data, but don't block if it's currently locked (e.g. during a measurement update)
+	if (xSemaphoreTake(g_context->measurement_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {		has_measurement = true;
+		has_measurement = true;
 	}
 
 	char response[240];
+	bool s_manual_mode = (xEventGroupGetBits(g_context->system_status) & GLOW_MANUAL_MODE_BIT) != 0;
 	const char *system_state = s_manual_mode ? "RUNNING_MANUAL" : "RUNNING_AUTO";
 	const char *rc_measurement = "pending";
 
@@ -190,12 +187,15 @@ static esp_err_t web_live_get_handler(httpd_req_t *req)
 		"{\"ok\":true,\"system_state\":\"%s\",\"manual_mode\":%s,\"vout_mV\":%u,\"iout_mA\":%u,\"vbus_mV\":%u,\"vbat_mV\":%u,\"rc_measurement\":\"%s\"}",
 		system_state,
 		s_manual_mode ? "true" : "false",
-		(unsigned)(has_measurement ? measurement.vout_mV : 0),
-		(unsigned)(has_measurement ? measurement.iout_mA : 0),
-		(unsigned)(has_measurement ? measurement.vbus_mV : 0),
-		(unsigned)(has_measurement ? measurement.vbat_mV : 0),
+		(unsigned)(has_measurement ? g_context->latest_measurement.vout_mV : 0),
+		(unsigned)(has_measurement ? g_context->latest_measurement.iout_mA : 0),
+		(unsigned)(has_measurement ? g_context->latest_measurement.vbus_mV : 0),
+		(unsigned)(has_measurement ? g_context->latest_measurement.vbat_mV : 0),
 		rc_measurement
 	);
+	if (has_measurement) {
+		xSemaphoreGive(g_context->measurement_mutex);
+	}
 
 	httpd_resp_set_type(req, "application/json");
 	return httpd_resp_sendstr(req, response);
@@ -220,9 +220,13 @@ static esp_err_t web_mode_set_handler(httpd_req_t *req)
 		return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"invalid_manual_value\"}");
 	}
 
-	s_manual_mode = manual != 0;
+	if(manual) {
+		xEventGroupSetBits(g_context->system_status, GLOW_MANUAL_MODE_BIT);
+	} else {
+		xEventGroupClearBits(g_context->system_status, GLOW_MANUAL_MODE_BIT);
+	}
 	httpd_resp_set_type(req, "application/json");
-	return httpd_resp_sendstr(req, s_manual_mode ? "{\"ok\":true,\"manual_mode\":true}" : "{\"ok\":true,\"manual_mode\":false}");
+	return httpd_resp_sendstr(req, (manual==1) ? "{\"ok\":true,\"manual_mode\":true}" : "{\"ok\":true,\"manual_mode\":false}");
 }
 
 static esp_err_t web_settings_load_handler(httpd_req_t *req)
@@ -635,6 +639,10 @@ esp_err_t glow_web_init(void)
 		return ESP_OK;
 	}
 
+	if (g_context == NULL) {
+		ESP_LOGE(TAG, "Glow_web cannot work without context!");
+		return ESP_ERR_INVALID_STATE;
+	}
 
 	ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "esp_netif_init failed");
 	

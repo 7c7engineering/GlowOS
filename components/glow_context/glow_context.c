@@ -16,18 +16,8 @@ esp_err_t glow_context_init(void)
         return ESP_ERR_NO_MEM;
     }
     g_context->control_queue = xQueueCreate(10, sizeof(glow_command_t));
-    if (!g_context->control_queue) {
-        ESP_LOGE(TAG, "Failed to create control queue");
-        free(g_context);
-        return ESP_ERR_NO_MEM;
-    }
-    g_context->measurement_queue = xQueueCreate(1, sizeof(glow_measurement_t));
-    if (!g_context->measurement_queue) {
-        ESP_LOGE(TAG, "Failed to create measurement queue");
-        vQueueDelete(g_context->control_queue);
-        free(g_context);
-        return ESP_ERR_NO_MEM;
-    }
+    g_context->system_status = xEventGroupCreate();
+    g_context->measurement_mutex = xSemaphoreCreateMutex();
     ESP_LOGI(TAG, "GlowDriver context initialized");
     return ESP_OK;
 }
