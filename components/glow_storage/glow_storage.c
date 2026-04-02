@@ -350,14 +350,21 @@ static esp_err_t glow_storage_set_config_json_internal(const char *json, bool pe
     glow_device_config_t parsed;
     ESP_RETURN_ON_ERROR(glow_storage_parse_device_config_json(json, &parsed), TAG, "Config JSON parse/validation failed");
 
-    char canonical[GLOW_STORAGE_CONFIG_JSON_MAX_LEN];
-    ESP_RETURN_ON_ERROR(
-        glow_storage_serialize_device_config_json(&parsed, canonical, sizeof(canonical)),
-        TAG,
-        "Failed to serialize config"
-    );
+    char *canonical = malloc(GLOW_STORAGE_CONFIG_JSON_MAX_LEN);
+    if (canonical == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate temporary config buffer");
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t err = glow_storage_serialize_device_config_json(&parsed, canonical, GLOW_STORAGE_CONFIG_JSON_MAX_LEN);
+    if (err != ESP_OK) {
+        free(canonical);
+        ESP_LOGE(TAG, "Failed to serialize config");
+        return err;
+    }
 
     if (strlen(canonical) + 1 > sizeof(s_config_json)) {
+        free(canonical);
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -366,9 +373,15 @@ static esp_err_t glow_storage_set_config_json_internal(const char *json, bool pe
     glow_storage_apply_legacy_settings(&s_device_config);
 
     if (persist) {
-        ESP_RETURN_ON_ERROR(glow_storage_nvs_save_json(s_config_json), TAG, "Failed to persist config JSON to NVS");
+        err = glow_storage_nvs_save_json(s_config_json);
+        if (err != ESP_OK) {
+            free(canonical);
+            ESP_LOGE(TAG, "Failed to persist config JSON to NVS");
+            return err;
+        }
     }
 
+    free(canonical);
     return ESP_OK;
 }
 
@@ -420,8 +433,14 @@ esp_err_t glow_storage_init(void)
 {
     ESP_RETURN_ON_ERROR(glow_storage_mount_fat_partition(), TAG, "FAT mount failed");
 
-    char nvs_json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN] = {0};
-    esp_err_t nvs_err = glow_storage_nvs_load_json(nvs_json, sizeof(nvs_json));
+    char *nvs_json = malloc(GLOW_STORAGE_CONFIG_JSON_MAX_LEN);
+    if (nvs_json == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate NVS JSON buffer");
+        return ESP_ERR_NO_MEM;
+    }
+    nvs_json[0] = '\0';
+
+    esp_err_t nvs_err = glow_storage_nvs_load_json(nvs_json, GLOW_STORAGE_CONFIG_JSON_MAX_LEN);
     if (nvs_err == ESP_OK) {
         esp_err_t parse_err = glow_storage_set_config_json_internal(nvs_json, false);
         if (parse_err != ESP_OK) {
@@ -430,10 +449,27 @@ esp_err_t glow_storage_init(void)
         }
     }
 
+    free(nvs_json);
+
     if (nvs_err != ESP_OK) {
-        char default_json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN] = {0};
-        ESP_RETURN_ON_ERROR(glow_storage_get_default_json(default_json, sizeof(default_json)), TAG, "Default config missing/too large");
-        ESP_RETURN_ON_ERROR(glow_storage_set_config_json_internal(default_json, true), TAG, "Failed to initialize config from default JSON");
+        char *default_json = malloc(GLOW_STORAGE_CONFIG_JSON_MAX_LEN);
+        if (default_json == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate default JSON buffer");
+            return ESP_ERR_NO_MEM;
+        }
+
+        esp_err_t err = glow_storage_get_default_json(default_json, GLOW_STORAGE_CONFIG_JSON_MAX_LEN);
+        if (err != ESP_OK) {
+            free(default_json);
+            return err;
+        }
+
+        err = glow_storage_set_config_json_internal(default_json, true);
+        free(default_json);
+        if (err != ESP_OK) {
+            return err;
+        }
+
         ESP_LOGI(TAG, "Initialized config from embedded default JSON");
     }
 
