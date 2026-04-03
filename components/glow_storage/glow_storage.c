@@ -20,40 +20,15 @@ static const char *TAG = "GLOW_STORAGE";
 #define GLOW_STORAGE_MOUNT_POINT "/storage"
 
 #define GLOW_STORAGE_NVS_NAMESPACE "glow_storage"
-#define GLOW_STORAGE_NVS_KEY_CONFIG "device_config_json"
-#define GLOW_STORAGE_CONFIG_JSON_MAX_LEN 1024
-#define GLOW_STORAGE_RECEIVER_TYPE_MAX_LEN 16
-
-typedef struct {
-    uint8_t battery_ncells;
-    float battery_low_voltage;
-    float battery_crit_voltage;
-    uint8_t leds_num_leds;
-    float leds_brightness;
-    float glow_voltage;
-    float glow_boost;
-    float glow_boost_time;
-    char receiver_type[GLOW_STORAGE_RECEIVER_TYPE_MAX_LEN];
-    float receiver_failsafe_timeout;
-    int receiver_threshold;
-} glow_device_config_t;
+#define GLOW_STORAGE_NVS_KEY_CONFIG "device_cfg"
 
 static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
 static bool s_mounted;
-static glow_settings_t s_settings;
 static glow_device_config_t s_device_config;
 static char s_config_json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN];
 
 extern const uint8_t _binary_default_json_start[] asm("_binary_default_json_start");
 extern const uint8_t _binary_default_json_end[] asm("_binary_default_json_end");
-
-static void glow_storage_apply_legacy_settings(const glow_device_config_t *config)
-{
-    s_settings.led_count = config->leds_num_leds;
-    s_settings.battery_low_warning_v = config->battery_low_voltage;
-    s_settings.battery_low_cutoff_v = config->battery_crit_voltage;
-    s_settings.cell_count = config->battery_ncells;
-}
 
 static bool glow_storage_is_receiver_type_valid(const char *type)
 {
@@ -293,12 +268,41 @@ static esp_err_t glow_storage_nvs_save_json(const char *json)
     nvs_handle_t handle;
     esp_err_t err = nvs_open(GLOW_STORAGE_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open failed: %s", esp_err_to_name(err));
         return err;
     }
 
     err = nvs_set_str(handle, GLOW_STORAGE_NVS_KEY_CONFIG, json);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_set_str failed: %s", esp_err_to_name(err));
+    }
+
     if (err == ESP_OK) {
         err = nvs_commit(handle);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "nvs_commit failed: %s", esp_err_to_name(err));
+        }
+    }
+
+    if (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE || err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        ESP_LOGW(TAG, "NVS full for namespace '%s', erasing namespace and retrying", GLOW_STORAGE_NVS_NAMESPACE);
+        esp_err_t erase_err = nvs_erase_all(handle);
+        if (erase_err == ESP_OK) {
+            erase_err = nvs_commit(handle);
+        }
+        if (erase_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to erase namespace '%s': %s", GLOW_STORAGE_NVS_NAMESPACE, esp_err_to_name(erase_err));
+            nvs_close(handle);
+            return erase_err;
+        }
+
+        err = nvs_set_str(handle, GLOW_STORAGE_NVS_KEY_CONFIG, json);
+        if (err == ESP_OK) {
+            err = nvs_commit(handle);
+        }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Retry save failed: %s", esp_err_to_name(err));
+        }
     }
 
     nvs_close(handle);
@@ -370,7 +374,6 @@ static esp_err_t glow_storage_set_config_json_internal(const char *json, bool pe
 
     s_device_config = parsed;
     memcpy(s_config_json, canonical, strlen(canonical) + 1);
-    glow_storage_apply_legacy_settings(&s_device_config);
 
     if (persist) {
         err = glow_storage_nvs_save_json(s_config_json);
@@ -464,10 +467,15 @@ esp_err_t glow_storage_init(void)
             return err;
         }
 
-        err = glow_storage_set_config_json_internal(default_json, true);
+        err = glow_storage_set_config_json_internal(default_json, false);
         free(default_json);
         if (err != ESP_OK) {
             return err;
+        }
+
+        err = glow_storage_save_config();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Default config loaded but persistence to NVS failed: %s", esp_err_to_name(err));
         }
 
         ESP_LOGI(TAG, "Initialized config from embedded default JSON");
@@ -476,63 +484,37 @@ esp_err_t glow_storage_init(void)
     return ESP_OK;
 }
 
-esp_err_t glow_storage_get_settings(glow_settings_t *out_settings)
+esp_err_t glow_storage_get_device_config(glow_device_config_t *out_config)
 {
-    if (out_settings == NULL) {
+    if (out_config == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    *out_settings = s_settings;
+    *out_config = s_device_config;
     return ESP_OK;
 }
 
-esp_err_t glow_storage_set_settings(const glow_settings_t *settings)
+esp_err_t glow_storage_set_device_config(const glow_device_config_t *config)
 {
-    if (settings == NULL) {
+    if (config == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    glow_settings_t normalized = *settings;
-    if (normalized.led_count > GLOW_SETTINGS_LED_COUNT_MAX) {
-        normalized.led_count = GLOW_SETTINGS_LED_COUNT_MAX;
+    if (!glow_storage_validate_device_config(config)) {
+        return ESP_ERR_INVALID_ARG;
     }
-    if (normalized.battery_low_warning_v < GLOW_SETTINGS_BAT_LOW_WARNING_V_MIN) {
-        normalized.battery_low_warning_v = GLOW_SETTINGS_BAT_LOW_WARNING_V_MIN;
-    }
-    if (normalized.battery_low_warning_v > GLOW_SETTINGS_BAT_LOW_WARNING_V_MAX) {
-        normalized.battery_low_warning_v = GLOW_SETTINGS_BAT_LOW_WARNING_V_MAX;
-    }
-    if (normalized.battery_low_cutoff_v < GLOW_SETTINGS_BAT_LOW_CUTOFF_V_MIN) {
-        normalized.battery_low_cutoff_v = GLOW_SETTINGS_BAT_LOW_CUTOFF_V_MIN;
-    }
-    if (normalized.battery_low_cutoff_v > GLOW_SETTINGS_BAT_LOW_CUTOFF_V_MAX) {
-        normalized.battery_low_cutoff_v = GLOW_SETTINGS_BAT_LOW_CUTOFF_V_MAX;
-    }
-    if (normalized.battery_low_cutoff_v > normalized.battery_low_warning_v) {
-        normalized.battery_low_cutoff_v = normalized.battery_low_warning_v;
-    }
-    if (!(normalized.cell_count == GLOW_SETTINGS_CELL_COUNT_AUTO ||
-        (normalized.cell_count >= GLOW_SETTINGS_CELL_COUNT_MIN && normalized.cell_count <= GLOW_SETTINGS_CELL_COUNT_MAX))) {
-        normalized.cell_count = GLOW_SETTINGS_CELL_COUNT_AUTO;
-    }
-
-    glow_device_config_t updated = s_device_config;
-    updated.leds_num_leds = normalized.led_count;
-    updated.battery_low_voltage = normalized.battery_low_warning_v;
-    updated.battery_crit_voltage = normalized.battery_low_cutoff_v;
-    updated.battery_ncells = normalized.cell_count;
 
     char json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN] = {0};
-    ESP_RETURN_ON_ERROR(glow_storage_serialize_device_config_json(&updated, json, sizeof(json)), TAG, "Failed to serialize updated settings");
+    ESP_RETURN_ON_ERROR(glow_storage_serialize_device_config_json(config, json, sizeof(json)), TAG, "Failed to serialize config");
     return glow_storage_set_config_json_internal(json, true);
 }
 
-esp_err_t glow_storage_save_settings(void)
+esp_err_t glow_storage_save_config(void)
 {
     return glow_storage_nvs_save_json(s_config_json);
 }
 
-esp_err_t glow_storage_reset_settings(void)
+esp_err_t glow_storage_reset_config(void)
 {
     char default_json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN] = {0};
     ESP_RETURN_ON_ERROR(glow_storage_get_default_json(default_json, sizeof(default_json)), TAG, "Default config missing/too large");

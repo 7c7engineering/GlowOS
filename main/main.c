@@ -15,7 +15,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
-
+#include "glow_core.h"
 
 static const char *TAG = "Main";
 
@@ -38,34 +38,7 @@ void app_main(void)
     glow_power_init();
     glow_storage_init();
     glow_sensors_init();
+    glow_core_init();
     vTaskDelay(5000 / portTICK_PERIOD_MS);
     glow_web_init();
-
-    while(1)
-    {
-        // wait for command in the control queue
-        glow_command_t cmd;
-        if (xQueueReceive(g_context->control_queue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE) {
-            ESP_LOGI(TAG, "Received command: %d", cmd.command_id);
-            // Handle the command (this is where you would add logic to control the hardware based on the command)
-            switch (cmd.command_id) {
-                case GLOW_CMD_SET_LED_COLOR:
-                    // Example: set LED color based on command data
-                    glow_led_set_color(cmd.data[0], cmd.data[1], cmd.data[2]);
-                    break;
-                case GLOW_CMD_SET_VOLTAGE:
-                    // Example: set power level based on command data
-                    float voltage;
-                    memcpy(&voltage, cmd.data, sizeof(float));
-                    glow_power_set_voltage(voltage);
-                    break;
-                case GLOW_CMD_ENABLE_POWER:
-                    glow_power_enable(cmd.data[0] != 0);
-                    break;
-                default:
-                    ESP_LOGW(TAG, "Unknown command ID or not yet implemented: %d", cmd.command_id);
-                    break;
-            }
-        }
-    }
 }
