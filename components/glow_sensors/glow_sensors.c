@@ -49,8 +49,8 @@ const float VBAT_DIVIDER_GAIN = 11.001f; // Voltage divider gain for VBUS and VB
 const gpio_num_t PIN_RC_PWM = GPIO_NUM_5; // Input for the RC PWM signal.
 
 #define RC_PWM_SIGNAL_TIMEOUT_US  100000
-#define RC_PWM_MIN_PULSE_US       120
-#define RC_PWM_MAX_PULSE_US       1200
+#define RC_PWM_MIN_PULSE_US       1000
+#define RC_PWM_MAX_PULSE_US       2000
 #define RC_PWM_MIN_PERIOD_US      10000
 #define RC_PWM_MAX_PERIOD_US      30000
 #define RC_PWM_RMT_RESOLUTION_HZ  1000000
@@ -76,7 +76,7 @@ static esp_err_t glow_sensor_adc_create_cali_handle(adc_channel_t channel, adc_c
         return ret;
     }
 
-#if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
+    #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
     if (scheme_mask & ADC_CALI_SCHEME_VER_CURVE_FITTING) {
         adc_cali_curve_fitting_config_t cali_cfg = {
             .unit_id = GLOW_ADC_UNIT,
@@ -88,11 +88,11 @@ static esp_err_t glow_sensor_adc_create_cali_handle(adc_channel_t channel, adc_c
         *out_is_curve = true;
         return ESP_OK;
     }
-#else
+    #else
     (void)channel;
-#endif
+    #endif
 
-#if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
+   #if ADC_CALI_SCHEME_LINE_FITTING_SUPPORTED
     if (scheme_mask & ADC_CALI_SCHEME_VER_LINE_FITTING) {
         adc_cali_line_fitting_config_t cali_cfg = {
             .unit_id = GLOW_ADC_UNIT,
@@ -103,7 +103,7 @@ static esp_err_t glow_sensor_adc_create_cali_handle(adc_channel_t channel, adc_c
         *out_is_curve = false;
         return ESP_OK;
     }
-#endif
+   #endif
 
     return ESP_ERR_NOT_SUPPORTED;
 }
@@ -447,6 +447,7 @@ esp_err_t glow_sensor_get_rc_pwm(uint32_t *percentage, bool *signal_valid)
     uint32_t period_us = 0;
     glow_sensor_get_rc_timing(&pulse_width_us, &period_us, signal_valid);
     *percentage = (pulse_width_us - RC_PWM_MIN_PULSE_US) * 100 / (RC_PWM_MAX_PULSE_US - RC_PWM_MIN_PULSE_US);
+    //ESP_LOGI(TAG, "RC PWM measurement: pulse=%u us, period=%u us, valid=%s", (unsigned)pulse_width_us, (unsigned)period_us, *signal_valid ? "true" : "false");
     return ESP_OK;
 }
 

@@ -27,7 +27,12 @@ static esp_err_t glow_core_detect_battery_cells(void)
     // Assuming LiPo battery with nominal voltage of 3.7V per cell and fully charged voltage of 4.2V per cell
     if (g_context->latest_measurement.vbat_mV > 0)
     {
-        uint8_t detected_cells = (g_context->latest_measurement.vbat_mV + 200) / 4200; // Add some margin and round to nearest integer
+        uint16_t detected_cells = (g_context->latest_measurement.vbat_mV) / 4100;
+        if((g_context->latest_measurement.vbat_mV) % 4100 )
+        {
+            detected_cells++;
+        }
+        
         if (detected_cells > 0 && detected_cells <= 6)
         { // Limit to reasonable cell counts
             s_core_config.battery_ncells = detected_cells;
@@ -183,7 +188,7 @@ esp_err_t glow_core_get_measurements()
         g_context->latest_measurement.rc_pwm_percentage = rc_pwm_percentage;
         g_context->latest_measurement.rc_pwm_signal_valid = rc_pwm_signal_valid ? 1U : 0U;
         xSemaphoreGive(g_context->measurement_mutex);
-        // ESP_LOGI(TAG, "Measurements updated: vout=%u mV, iout=%u mA, vbus=%u mV, vbat=%u mV, temp=%.2f C, rc_pwm=%u%% (valid=%s)", vout_mV, iout_mA, vbus_mV, vbat_mV, temp_degC, rc_pwm_percentage, rc_pwm_signal_valid ? "true" : "false");
+        //ESP_LOGI(TAG, "Measurements updated: vout=%u mV, iout=%u mA, vbus=%u mV, vbat=%u mV, temp=%.2f C, rc_pwm=%u%% (valid=%s)", vout_mV, iout_mA, vbus_mV, vbat_mV, temp_degC, rc_pwm_percentage, rc_pwm_signal_valid ? "true" : "false");
     }
     else
     {
@@ -196,6 +201,8 @@ void vtask_core(void *arg)
 {
     (void)arg;
     bool glow_wire_continuity_ok = false;
+
+    glow_core_goto_state(GLOW_STATE_OFF);
 
     while (1)
     {
@@ -313,7 +320,7 @@ void vtask_core_cmd_handler(void *arg)
     glow_command_t cmd;
     while (1)
     {
-        if (xQueueReceive(g_context->control_queue, &cmd, portMAX_DELAY) == pdTRUE)
+        if (xQueueReceive(g_context->control_queue, &cmd, pdMS_TO_TICKS(1000)) == pdTRUE)
         {
             // Handle the command (this is where you would add logic to control the hardware based on the command)
             switch (cmd.command_id)
@@ -360,6 +367,14 @@ void vtask_core_cmd_handler(void *arg)
                 break;
             }
         }
+        // Check the event group for a bit that indicates the config has been updated and should be reloaded
+        if ((xEventGroupGetBits(g_context->system_status) & GLOW_RELOAD_CONFIG_BIT) != 0)
+        {            
+            ESP_LOGI(TAG, "Reloading config due to update event");
+            glow_core_load_active_config();
+            // Clear the bit after handling the config reload
+            xEventGroupClearBits(g_context->system_status, GLOW_RELOAD_CONFIG_BIT);
+        }
     }
 }
 
@@ -370,7 +385,6 @@ esp_err_t glow_core_init(void)
         ESP_LOGE(TAG, "Glow context is not initialized");
         return ESP_ERR_INVALID_STATE;
     }
-    g_context->system_state = GLOW_STATE_OFF;
     glow_core_load_active_config();
     BaseType_t task_created = xTaskCreate(vtask_core, "core_task", 4096, NULL, tskIDLE_PRIORITY + 1, NULL);
     ESP_RETURN_ON_FALSE(task_created == pdPASS, ESP_ERR_NO_MEM, TAG, "Failed to create core task");

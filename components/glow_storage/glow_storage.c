@@ -10,6 +10,7 @@
 #include "wear_levelling.h"
 #include "esp_check.h"
 #include "soc/soc_caps.h"
+#include "glow_context.h"
 #include "nvs.h"
 
 #include "glow_storage.h"
@@ -26,6 +27,8 @@ static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
 static bool s_mounted;
 static glow_device_config_t s_device_config;
 static char s_config_json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN];
+
+extern glow_context_t *g_context;
 
 extern const uint8_t _binary_default_json_start[] asm("_binary_default_json_start");
 extern const uint8_t _binary_default_json_end[] asm("_binary_default_json_end");
@@ -306,6 +309,10 @@ static esp_err_t glow_storage_nvs_save_json(const char *json)
     }
 
     nvs_close(handle);
+    // set the bit to notify other parts of the system that config has changed and should be reloaded
+    if (err == ESP_OK) {
+        xEventGroupSetBits(g_context->system_status, GLOW_RELOAD_CONFIG_BIT);
+    }
     return err;
 }
 

@@ -429,6 +429,7 @@ static esp_err_t web_settings_save_handler(httpd_req_t *req)
 
 	ESP_RETURN_ON_ERROR(glow_storage_set_device_config(&config), TAG, "Failed to set settings");
 	ESP_RETURN_ON_ERROR(glow_storage_save_config(), TAG, "Failed to save settings");
+	
 
 	httpd_resp_set_type(req, "application/json");
 	return httpd_resp_sendstr(req, "{\"ok\":true}");
