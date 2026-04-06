@@ -25,6 +25,7 @@ typedef enum {
     GLOW_STATE_MANUAL,
     GLOW_STATE_LOW_BATTERY,
     GLOW_STATE_BROKEN_WIRE,
+    GLOW_STATE_RC_LOST,
     GLOW_STATE_ERROR,
 } glow_system_state_t;
 

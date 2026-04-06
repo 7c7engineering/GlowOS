@@ -82,6 +82,23 @@
 
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
     .field { display: flex; flex-direction: column; gap: 6px; }
+    .field.inactive { opacity: .45; }
+
+    .module {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: linear-gradient(180deg, #ffffff, #f7fbf8);
+      margin-bottom: 10px;
+    }
+
+    .module h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: #2e5041;
+    }
 
     label { font-size: 13px; font-weight: 700; }
 
@@ -150,6 +167,7 @@
     }
 
     .status { margin-top: 10px; font-size: 13px; opacity: .78; }
+    .hint { margin-top: 8px; font-size: 12px; opacity: .7; }
 
     input[type=range] { width: 100%; }
 
@@ -183,66 +201,101 @@
       </div>
 
       <section class="panel active" id="settingsPanel">
-        <div class="grid">
-          <div class="field">
-            <label for="batteryCells">Battery Cells</label>
-            <select id="batteryCells">
-              <option value="0">Auto</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-              <option value="5">5</option>
-            </select>
+        <div class="module">
+          <h3>Battery</h3>
+          <div class="grid">
+            <div class="field">
+              <label for="batteryCells">Battery Cells</label>
+              <input id="batteryCells" type="number" min="0" max="5" step="1" value="0">
+            </div>
+            <div class="field">
+              <label for="batteryLowVoltage">Battery Low Voltage (V)</label>
+              <input id="batteryLowVoltage" type="number" min="2.0" max="3.3" step="0.01" value="3.2">
+            </div>
+            <div class="field">
+              <label for="batteryCritVoltage">Battery Critical Voltage (V)</label>
+              <input id="batteryCritVoltage" type="number" min="2.0" max="3.3" step="0.01" value="3.0">
+            </div>
           </div>
-          <div class="field">
-            <label for="batteryLowVoltage">Battery Low Voltage (V)</label>
-            <input id="batteryLowVoltage" type="number" min="2.5" max="3.7" step="0.01">
+        </div>
+
+        <div class="module">
+          <h3>LEDs</h3>
+          <div class="grid">
+            <div class="field">
+              <label for="ledNumLeds">Number of LEDs</label>
+              <input id="ledNumLeds" type="number" min="1" max="10" step="1" value="2">
+            </div>
+            <div class="field">
+              <label for="ledBrightness">LED Brightness (0..1)</label>
+              <input id="ledBrightness" type="number" min="0" max="1" step="0.01" value="0.5">
+            </div>
           </div>
-          <div class="field">
-            <label for="batteryCritVoltage">Battery Critical Voltage (V)</label>
-            <input id="batteryCritVoltage" type="number" min="2.5" max="3.5" step="0.01">
+        </div>
+
+        <div class="module">
+          <h3>Glow</h3>
+          <div class="grid">
+            <div class="field">
+              <label for="glowFunction">Function</label>
+              <select id="glowFunction">
+                <option value="onoff">onoff</option>
+                <option value="scale">scale</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="glowCutOffThreshold">Cut-off Threshold (%)</label>
+              <input id="glowCutOffThreshold" type="number" min="0" max="100" step="1" value="5">
+            </div>
+            <div class="field">
+              <label for="glowMaxPpm">Max PPM (%)</label>
+              <input id="glowMaxPpm" type="number" min="0" max="100" step="1" value="100">
+            </div>
+            <div class="field" id="fieldGlowMaxVoltage">
+              <label for="glowMaxVoltage">Max Voltage (V)</label>
+              <input id="glowMaxVoltage" type="number" min="0.8" max="3.3" step="0.01" value="3.3">
+            </div>
+            <div class="field">
+              <label for="glowVoltage">Glow Voltage (V)</label>
+              <input id="glowVoltage" type="number" min="0.8" max="3.3" step="0.01" value="2.0">
+            </div>
+            <div class="field" id="fieldGlowBoost">
+              <label for="glowBoost">Glow Boost (V)</label>
+              <input id="glowBoost" type="number" min="0.8" max="3.3" step="0.01" value="2.3">
+            </div>
+            <div class="field" id="fieldGlowBoostTime">
+              <label for="glowBoostTime">Glow Boost Time (s)</label>
+              <input id="glowBoostTime" type="number" min="0.0" max="10.0" step="0.1" value="1.5">
+            </div>
           </div>
-          <div class="field">
-            <label for="ledNumLeds">Number of LEDs</label>
-            <input id="ledNumLeds" type="number" min="0" max="5" step="1">
+          <div class="hint" id="glowFunctionHint">Function-specific parameters are enabled based on selected control mode.</div>
+        </div>
+
+        <div class="module">
+          <h3>Receiver</h3>
+          <div class="grid">
+            <div class="field">
+              <label for="receiverType">Receiver Type</label>
+              <select id="receiverType">
+                <option value="PWM">PWM</option>
+                <option value="PPM">PPM</option>
+                <option value="SBUS">SBUS</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="receiverChannel">Channel</label>
+              <input id="receiverChannel" type="number" min="1" max="16" step="1" value="1">
+            </div>
+            <div class="field">
+              <label for="receiverFailsafeTimeout">Failsafe Timeout (s)</label>
+              <input id="receiverFailsafeTimeout" type="number" min="0.0" max="10.0" step="0.1" value="2.0">
+            </div>
           </div>
-          <div class="field">
-            <label for="ledBrightness">LED Brightness (0..1)</label>
-            <input id="ledBrightness" type="number" min="0" max="1" step="0.01">
-          </div>
-          <div class="field">
-            <label for="glowVoltage">Glow Voltage (V)</label>
-            <input id="glowVoltage" type="number" min="0" max="5.5" step="0.01">
-          </div>
-          <div class="field">
-            <label for="glowBoost">Glow Boost (V)</label>
-            <input id="glowBoost" type="number" min="0" max="6.0" step="0.01">
-          </div>
-          <div class="field">
-            <label for="glowBoostTime">Glow Boost Time (s)</label>
-            <input id="glowBoostTime" type="number" min="0" max="10" step="0.1">
-          </div>
-          <div class="field">
-            <label for="receiverType">Receiver Type</label>
-            <select id="receiverType">
-              <option value="PPM">PPM</option>
-              <option value="SBUS">SBUS</option>
-              <option value="IBUS">IBUS</option>
-              <option value="CRSF">CRSF</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="receiverFailsafeTimeout">Failsafe Timeout (s)</label>
-            <input id="receiverFailsafeTimeout" type="number" min="0.1" max="5" step="0.1">
-          </div>
-          <div class="field">
-            <label for="receiverThreshold">Receiver Threshold</label>
-            <input id="receiverThreshold" type="number" min="0" max="100" step="1">
-          </div>
-          <div class="field" style="grid-column:1/-1;">
-            <label for="configPreview">JSON Preview</label>
-            <textarea id="configPreview" rows="10" readonly style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 11px;font-size:13px;background:#fff;color:var(--ink);"></textarea>
-          </div>
+        </div>
+
+        <div class="field" style="grid-column:1/-1;">
+          <label for="configPreview">JSON Preview</label>
+          <textarea id="configPreview" rows="12" readonly style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 11px;font-size:13px;background:#fff;color:var(--ink);"></textarea>
         </div>
         <div class="actions">
           <button class="ghost" id="loadSettings">Load</button>
@@ -387,30 +440,69 @@
           brightness: Number(qs('#ledBrightness').value),
         },
         glow: {
+          function: qs('#glowFunction').value,
+          'cut_off_thrs%': Number(qs('#glowCutOffThreshold').value),
+          'max_ppm_%': Number(qs('#glowMaxPpm').value),
+          max_voltage: Number(qs('#glowMaxVoltage').value),
           voltage: Number(qs('#glowVoltage').value),
           boost: Number(qs('#glowBoost').value),
           boost_time: Number(qs('#glowBoostTime').value),
         },
         receiver: {
           type: qs('#receiverType').value,
+          channel: Number(qs('#receiverChannel').value),
           failsafe_timeout: Number(qs('#receiverFailsafeTimeout').value),
-          threshold: Number(qs('#receiverThreshold').value),
+          threshold: Number(qs('#glowCutOffThreshold').value),
         },
       };
     }
 
     function setFormFromConfig(config) {
-      qs('#batteryCells').value = String(config.battery.ncells);
-      qs('#batteryLowVoltage').value = Number(config.battery.low_voltage).toFixed(2);
-      qs('#batteryCritVoltage').value = Number(config.battery.crit_voltage).toFixed(2);
-      qs('#ledNumLeds').value = String(config.leds.num_leds);
-      qs('#ledBrightness').value = Number(config.leds.brightness).toFixed(2);
-      qs('#glowVoltage').value = Number(config.glow.voltage).toFixed(2);
-      qs('#glowBoost').value = Number(config.glow.boost).toFixed(2);
-      qs('#glowBoostTime').value = Number(config.glow.boost_time).toFixed(1);
-      qs('#receiverType').value = config.receiver.type;
-      qs('#receiverFailsafeTimeout').value = Number(config.receiver.failsafe_timeout).toFixed(1);
-      qs('#receiverThreshold').value = String(config.receiver.threshold);
+      qs('#batteryCells').value = String(config.battery?.ncells ?? 0);
+      qs('#batteryLowVoltage').value = Number(config.battery?.low_voltage ?? 3.2).toFixed(2);
+      qs('#batteryCritVoltage').value = Number(config.battery?.crit_voltage ?? 3.0).toFixed(2);
+      qs('#ledNumLeds').value = String(config.leds?.num_leds ?? 2);
+      qs('#ledBrightness').value = Number(config.leds?.brightness ?? 0.5).toFixed(2);
+      qs('#glowFunction').value = config.glow?.function ?? 'onoff';
+      qs('#glowCutOffThreshold').value = String(config.glow?.['cut_off_thrs%'] ?? config.receiver?.threshold ?? 5);
+      qs('#glowMaxPpm').value = String(config.glow?.['max_ppm_%'] ?? 100);
+      qs('#glowMaxVoltage').value = Number(config.glow?.max_voltage ?? 3.3).toFixed(2);
+      qs('#glowVoltage').value = Number(config.glow?.voltage ?? 2.0).toFixed(2);
+      qs('#glowBoost').value = Number(config.glow?.boost ?? 2.3).toFixed(2);
+      qs('#glowBoostTime').value = Number(config.glow?.boost_time ?? 1.5).toFixed(1);
+      qs('#receiverType').value = config.receiver?.type ?? 'PPM';
+      qs('#receiverChannel').value = String(config.receiver?.channel ?? 1);
+      qs('#receiverFailsafeTimeout').value = Number(config.receiver?.failsafe_timeout ?? 2.0).toFixed(1);
+      applyGlowFunctionFieldAvailability();
+    }
+
+    function setFieldEnabled(fieldId, inputId, enabled) {
+      const field = qs('#' + fieldId);
+      const input = qs('#' + inputId);
+      input.disabled = !enabled;
+      field.classList.toggle('inactive', !enabled);
+    }
+
+    function applyGlowFunctionFieldAvailability() {
+      const mode = qs('#glowFunction').value;
+      const hint = qs('#glowFunctionHint');
+
+      if (mode === 'onoff') {
+        setFieldEnabled('fieldGlowMaxVoltage', 'glowMaxVoltage', false);
+        setFieldEnabled('fieldGlowBoost', 'glowBoost', true);
+        setFieldEnabled('fieldGlowBoostTime', 'glowBoostTime', true);
+        hint.textContent = 'onoff mode: max_voltage is currently not used.';
+      } else if (mode === 'scale') {
+        setFieldEnabled('fieldGlowMaxVoltage', 'glowMaxVoltage', true);
+        setFieldEnabled('fieldGlowBoost', 'glowBoost', false);
+        setFieldEnabled('fieldGlowBoostTime', 'glowBoostTime', false);
+        hint.textContent = 'scale mode: boost and boost_time are currently not used.';
+      } else {
+        setFieldEnabled('fieldGlowMaxVoltage', 'glowMaxVoltage', true);
+        setFieldEnabled('fieldGlowBoost', 'glowBoost', true);
+        setFieldEnabled('fieldGlowBoostTime', 'glowBoostTime', true);
+        hint.textContent = 'Function-specific parameters are enabled based on selected control mode.';
+      }
     }
 
     function updateConfigPreview() {
@@ -453,8 +545,13 @@
     qs('#loadSettings').addEventListener('click', loadSettings);
     qs('#saveSettings').addEventListener('click', saveSettings);
 
-    ['#batteryCells', '#batteryLowVoltage', '#batteryCritVoltage', '#ledNumLeds', '#ledBrightness', '#glowVoltage', '#glowBoost', '#glowBoostTime', '#receiverType', '#receiverFailsafeTimeout', '#receiverThreshold']
+    ['#batteryCells', '#batteryLowVoltage', '#batteryCritVoltage', '#ledNumLeds', '#ledBrightness', '#glowFunction', '#glowCutOffThreshold', '#glowMaxPpm', '#glowMaxVoltage', '#glowVoltage', '#glowBoost', '#glowBoostTime', '#receiverType', '#receiverChannel', '#receiverFailsafeTimeout']
       .forEach((id) => qs(id).addEventListener('input', updateConfigPreview));
+
+    qs('#glowFunction').addEventListener('change', () => {
+      applyGlowFunctionFieldAvailability();
+      updateConfigPreview();
+    });
 
     async function refreshLive() {
       try {
@@ -476,6 +573,7 @@
 
     refreshSwatch();
     setModeButtons();
+    applyGlowFunctionFieldAvailability();
     updateConfigPreview();
     loadSettings();
     refreshLive();

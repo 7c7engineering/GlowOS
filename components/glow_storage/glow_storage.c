@@ -27,18 +27,177 @@ static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
 static bool s_mounted;
 static glow_device_config_t s_device_config;
 static char s_config_json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN];
+static char s_schema_json[GLOW_STORAGE_CONFIG_JSON_MAX_LEN * 2];
 
 extern glow_context_t *g_context;
 
 extern const uint8_t _binary_default_json_start[] asm("_binary_default_json_start");
 extern const uint8_t _binary_default_json_end[] asm("_binary_default_json_end");
+extern const uint8_t _binary_default_schema_json_start[] asm("_binary_default_schema_json_start");
+extern const uint8_t _binary_default_schema_json_end[] asm("_binary_default_schema_json_end");
 
-static bool glow_storage_is_receiver_type_valid(const char *type)
+static esp_err_t glow_storage_load_schema(void)
 {
-    return strcmp(type, "PPM") == 0 ||
-           strcmp(type, "SBUS") == 0 ||
-           strcmp(type, "IBUS") == 0 ||
-           strcmp(type, "CRSF") == 0;
+    if (s_schema_json[0] != '\0') {
+        return ESP_OK;
+    }
+
+    size_t schema_len = (size_t)(_binary_default_schema_json_end - _binary_default_schema_json_start);
+    if (schema_len == 0 || schema_len + 1 > sizeof(s_schema_json)) {
+        ESP_LOGE(TAG, "Embedded default_schema.json is empty");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    memcpy(s_schema_json, _binary_default_schema_json_start, schema_len);
+    s_schema_json[schema_len] = '\0';
+    return ESP_OK;
+}
+
+static bool glow_storage_schema_find_key_value_start(const char *src, const char *key, const char **out_value_start)
+{
+    char pattern[64];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+
+    const char *found = strstr(src, pattern);
+    if (found == NULL) {
+        return false;
+    }
+
+    const char *colon = strchr(found, ':');
+    if (colon == NULL) {
+        return false;
+    }
+
+    const char *value_start = colon + 1;
+    while (*value_start == ' ' || *value_start == '\t' || *value_start == '\n' || *value_start == '\r') {
+        value_start++;
+    }
+
+    *out_value_start = value_start;
+    return true;
+}
+
+static bool glow_storage_schema_get_field_object_start(const char *field, const char **out_obj_start)
+{
+    const char *value_start = NULL;
+    if (!glow_storage_schema_find_key_value_start(s_schema_json, field, &value_start)) {
+        return false;
+    }
+    if (*value_start != '{') {
+        return false;
+    }
+    *out_obj_start = value_start;
+    return true;
+}
+
+static bool glow_storage_schema_get_number_in_object(const char *obj_start, const char *key, double *out_value)
+{
+    const char *value_start = NULL;
+    if (!glow_storage_schema_find_key_value_start(obj_start, key, &value_start)) {
+        return false;
+    }
+
+    errno = 0;
+    char *endptr = NULL;
+    double parsed = strtod(value_start, &endptr);
+    if (value_start == endptr || errno != 0) {
+        return false;
+    }
+
+    *out_value = parsed;
+    return true;
+}
+
+static bool glow_storage_schema_get_range_and_default(const char *field, double *out_min, double *out_max, double *out_default)
+{
+    const char *obj_start = NULL;
+    if (!glow_storage_schema_get_field_object_start(field, &obj_start)) {
+        return false;
+    }
+
+    if (!glow_storage_schema_get_number_in_object(obj_start, "min", out_min)) {
+        return false;
+    }
+    if (!glow_storage_schema_get_number_in_object(obj_start, "max", out_max)) {
+        return false;
+    }
+    if (!glow_storage_schema_get_number_in_object(obj_start, "default", out_default)) {
+        return false;
+    }
+    return true;
+}
+
+static bool glow_storage_schema_validate_number(const char *field, double value)
+{
+    double min_v = 0.0;
+    double max_v = 0.0;
+    double default_v = 0.0;
+    if (!glow_storage_schema_get_range_and_default(field, &min_v, &max_v, &default_v)) {
+        return false;
+    }
+    (void)default_v;
+    return value >= min_v && value <= max_v;
+}
+
+static bool glow_storage_schema_enum_contains(const char *field, const char *value)
+{
+    if (!value) {
+        return false;
+    }
+
+    const char *value_start = NULL;
+    if (!glow_storage_schema_find_key_value_start(s_schema_json, field, &value_start)) {
+        return false;
+    }
+    if (*value_start != '[') {
+        return false;
+    }
+
+    const char *scan = value_start;
+    while ((scan = strchr(scan, '"')) != NULL) {
+        const char *end = strchr(scan + 1, '"');
+        if (!end) {
+            break;
+        }
+        size_t len = (size_t)(end - (scan + 1));
+        if (strlen(value) == len && strncmp(scan + 1, value, len) == 0) {
+            return true;
+        }
+        scan = end + 1;
+        if (*scan == ']') {
+            break;
+        }
+    }
+    return false;
+}
+
+static bool glow_storage_schema_enum_first(const char *field, char *out, size_t out_size)
+{
+    const char *value_start = NULL;
+    if (!glow_storage_schema_find_key_value_start(s_schema_json, field, &value_start)) {
+        return false;
+    }
+    if (*value_start != '[') {
+        return false;
+    }
+
+    const char *start = strchr(value_start, '"');
+    if (!start) {
+        return false;
+    }
+    const char *end = strchr(start + 1, '"');
+    if (!end) {
+        return false;
+    }
+
+    size_t len = (size_t)(end - (start + 1));
+    if (len + 1 > out_size) {
+        return false;
+    }
+
+    memcpy(out, start + 1, len);
+    out[len] = '\0';
+    return true;
 }
 
 static bool glow_storage_find_key_value_start(const char *json, const char *key, const char **out_value_start)
@@ -130,40 +289,55 @@ static bool glow_storage_parse_string_field(const char *json, const char *key, c
 
 static bool glow_storage_validate_device_config(const glow_device_config_t *config)
 {
-    if (!(config->battery_ncells == 0 || (config->battery_ncells >= 2 && config->battery_ncells <= 5))) {
+    if (!glow_storage_schema_validate_number("ncells", config->battery_ncells)) {
         return false;
     }
-    if (config->battery_low_voltage < 2.5f || config->battery_low_voltage > 3.7f) {
+    if (!glow_storage_schema_validate_number("low_voltage", config->battery_low_voltage)) {
         return false;
     }
-    if (config->battery_crit_voltage < 2.5f || config->battery_crit_voltage > 3.5f) {
+    if (!glow_storage_schema_validate_number("crit_voltage", config->battery_crit_voltage)) {
         return false;
     }
     if (config->battery_crit_voltage > config->battery_low_voltage) {
         return false;
     }
-    if (config->leds_num_leds > 5) {
+    if (!glow_storage_schema_validate_number("num_leds", config->leds_num_leds)) {
         return false;
     }
-    if (config->leds_brightness < 0.0f || config->leds_brightness > 1.0f) {
+    if (!glow_storage_schema_validate_number("brightness", config->leds_brightness)) {
         return false;
     }
-    if (config->glow_voltage < 0.0f || config->glow_voltage > 5.5f) {
+    if (!glow_storage_schema_enum_contains("function", config->glow_function)) {
         return false;
     }
-    if (config->glow_boost < 0.0f || config->glow_boost > 6.0f) {
+    if (!glow_storage_schema_validate_number("cut_off_thrs%", config->glow_cut_off_thrs_pct)) {
         return false;
     }
-    if (config->glow_boost_time < 0.0f || config->glow_boost_time > 10.0f) {
+    if (!glow_storage_schema_validate_number("max_ppm_%", config->glow_max_ppm_pct)) {
         return false;
     }
-    if (!glow_storage_is_receiver_type_valid(config->receiver_type)) {
+    if (!glow_storage_schema_validate_number("max_voltage", config->glow_max_voltage)) {
         return false;
     }
-    if (config->receiver_failsafe_timeout < 0.1f || config->receiver_failsafe_timeout > 5.0f) {
+    if (!glow_storage_schema_validate_number("voltage", config->glow_voltage)) {
         return false;
     }
-    if (config->receiver_threshold < 0 || config->receiver_threshold > 100) {
+    if (!glow_storage_schema_validate_number("boost", config->glow_boost)) {
+        return false;
+    }
+    if (!glow_storage_schema_validate_number("boost_time", config->glow_boost_time)) {
+        return false;
+    }
+    if (!glow_storage_schema_enum_contains("type", config->receiver_type)) {
+        return false;
+    }
+    if (!glow_storage_schema_validate_number("channel", config->receiver_channel)) {
+        return false;
+    }
+    if (!glow_storage_schema_validate_number("failsafe_timeout", config->receiver_failsafe_timeout)) {
+        return false;
+    }
+    if (config->receiver_threshold != (int)config->glow_cut_off_thrs_pct) {
         return false;
     }
 
@@ -172,30 +346,88 @@ static bool glow_storage_validate_device_config(const glow_device_config_t *conf
 
 static esp_err_t glow_storage_parse_device_config_json(const char *json, glow_device_config_t *out_config)
 {
+    if (!json || !out_config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    double schema_default = 0.0;
     int battery_ncells = 0;
     float battery_low_voltage = 0.0f;
     float battery_crit_voltage = 0.0f;
     int leds_num_leds = 0;
     float leds_brightness = 0.0f;
+    int glow_cut_off = 0;
+    int glow_max_ppm = 0;
+    float glow_max_voltage = 0.0f;
     float glow_voltage = 0.0f;
     float glow_boost = 0.0f;
     float glow_boost_time = 0.0f;
-    char receiver_type[GLOW_STORAGE_RECEIVER_TYPE_MAX_LEN] = {0};
+    int receiver_channel = 0;
     float receiver_failsafe_timeout = 0.0f;
-    int receiver_threshold = 0;
+    char glow_function[GLOW_STORAGE_GLOW_FUNCTION_MAX_LEN] = {0};
+    char receiver_type[GLOW_STORAGE_RECEIVER_TYPE_MAX_LEN] = {0};
 
-    if (!glow_storage_parse_int_field(json, "ncells", &battery_ncells) ||
-        !glow_storage_parse_float_field(json, "low_voltage", &battery_low_voltage) ||
-        !glow_storage_parse_float_field(json, "crit_voltage", &battery_crit_voltage) ||
-        !glow_storage_parse_int_field(json, "num_leds", &leds_num_leds) ||
-        !glow_storage_parse_float_field(json, "brightness", &leds_brightness) ||
-        !glow_storage_parse_float_field(json, "voltage", &glow_voltage) ||
-        !glow_storage_parse_float_field(json, "boost", &glow_boost) ||
-        !glow_storage_parse_float_field(json, "boost_time", &glow_boost_time) ||
-        !glow_storage_parse_string_field(json, "type", receiver_type, sizeof(receiver_type)) ||
-        !glow_storage_parse_float_field(json, "failsafe_timeout", &receiver_failsafe_timeout) ||
-        !glow_storage_parse_int_field(json, "threshold", &receiver_threshold)) {
-        return ESP_ERR_INVALID_ARG;
+    if (!glow_storage_parse_int_field(json, "ncells", &battery_ncells)) {
+        if (!glow_storage_schema_get_range_and_default("ncells", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        battery_ncells = (int)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "low_voltage", &battery_low_voltage)) {
+        if (!glow_storage_schema_get_range_and_default("low_voltage", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        battery_low_voltage = (float)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "crit_voltage", &battery_crit_voltage)) {
+        if (!glow_storage_schema_get_range_and_default("crit_voltage", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        battery_crit_voltage = (float)schema_default;
+    }
+    if (!glow_storage_parse_int_field(json, "num_leds", &leds_num_leds)) {
+        if (!glow_storage_schema_get_range_and_default("num_leds", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        leds_num_leds = (int)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "brightness", &leds_brightness)) {
+        if (!glow_storage_schema_get_range_and_default("brightness", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        leds_brightness = (float)schema_default;
+    }
+    if (!glow_storage_parse_string_field(json, "function", glow_function, sizeof(glow_function))) {
+        if (!glow_storage_schema_enum_first("function", glow_function, sizeof(glow_function))) {
+            strncpy(glow_function, "onoff", sizeof(glow_function) - 1);
+        }
+    }
+    if (!glow_storage_parse_int_field(json, "cut_off_thrs%", &glow_cut_off)) {
+        if (!glow_storage_schema_get_range_and_default("cut_off_thrs%", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        glow_cut_off = (int)schema_default;
+    }
+    if (!glow_storage_parse_int_field(json, "max_ppm_%", &glow_max_ppm)) {
+        if (!glow_storage_schema_get_range_and_default("max_ppm_%", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        glow_max_ppm = (int)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "max_voltage", &glow_max_voltage)) {
+        if (!glow_storage_schema_get_range_and_default("max_voltage", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        glow_max_voltage = (float)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "voltage", &glow_voltage)) {
+        if (!glow_storage_schema_get_range_and_default("voltage", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        glow_voltage = (float)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "boost", &glow_boost)) {
+        if (!glow_storage_schema_get_range_and_default("boost", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        glow_boost = (float)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "boost_time", &glow_boost_time)) {
+        if (!glow_storage_schema_get_range_and_default("boost_time", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        glow_boost_time = (float)schema_default;
+    }
+    if (!glow_storage_parse_string_field(json, "type", receiver_type, sizeof(receiver_type))) {
+        if (!glow_storage_schema_enum_first("type", receiver_type, sizeof(receiver_type))) {
+            strncpy(receiver_type, "PPM", sizeof(receiver_type) - 1);
+        }
+    }
+    if (!glow_storage_parse_int_field(json, "channel", &receiver_channel)) {
+        if (!glow_storage_schema_get_range_and_default("channel", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        receiver_channel = (int)schema_default;
+    }
+    if (!glow_storage_parse_float_field(json, "failsafe_timeout", &receiver_failsafe_timeout)) {
+        if (!glow_storage_schema_get_range_and_default("failsafe_timeout", &schema_default, &schema_default, &schema_default)) return ESP_ERR_INVALID_ARG;
+        receiver_failsafe_timeout = (float)schema_default;
     }
 
     glow_device_config_t parsed = {
@@ -204,12 +436,17 @@ static esp_err_t glow_storage_parse_device_config_json(const char *json, glow_de
         .battery_crit_voltage = battery_crit_voltage,
         .leds_num_leds = (uint8_t)leds_num_leds,
         .leds_brightness = leds_brightness,
+        .glow_cut_off_thrs_pct = (uint8_t)glow_cut_off,
+        .glow_max_ppm_pct = (uint8_t)glow_max_ppm,
+        .glow_max_voltage = glow_max_voltage,
         .glow_voltage = glow_voltage,
         .glow_boost = glow_boost,
         .glow_boost_time = glow_boost_time,
+        .receiver_channel = (uint8_t)receiver_channel,
         .receiver_failsafe_timeout = receiver_failsafe_timeout,
-        .receiver_threshold = receiver_threshold,
+        .receiver_threshold = glow_cut_off,
     };
+    strncpy(parsed.glow_function, glow_function, sizeof(parsed.glow_function) - 1);
     strncpy(parsed.receiver_type, receiver_type, sizeof(parsed.receiver_type) - 1);
 
     if (!glow_storage_validate_device_config(&parsed)) {
@@ -236,12 +473,17 @@ static esp_err_t glow_storage_serialize_device_config_json(const glow_device_con
         "    \"brightness\": %.3f\n"
         "  },\n"
         "  \"glow\": {\n"
+        "    \"function\": \"%s\",\n"
+        "    \"cut_off_thrs%%\": %u,\n"
+        "    \"max_ppm_%%\": %u,\n"
+        "    \"max_voltage\": %.3f,\n"
         "    \"voltage\": %.3f,\n"
         "    \"boost\": %.3f,\n"
         "    \"boost_time\": %.3f\n"
         "  },\n"
         "  \"receiver\": {\n"
         "    \"type\": \"%s\",\n"
+        "    \"channel\": %u,\n"
         "    \"failsafe_timeout\": %.3f,\n"
         "    \"threshold\": %d\n"
         "  }\n"
@@ -251,10 +493,15 @@ static esp_err_t glow_storage_serialize_device_config_json(const glow_device_con
         (double)config->battery_crit_voltage,
         (unsigned)config->leds_num_leds,
         (double)config->leds_brightness,
+        config->glow_function,
+        (unsigned)config->glow_cut_off_thrs_pct,
+        (unsigned)config->glow_max_ppm_pct,
+        (double)config->glow_max_voltage,
         (double)config->glow_voltage,
         (double)config->glow_boost,
         (double)config->glow_boost_time,
         config->receiver_type,
+        (unsigned)config->receiver_channel,
         (double)config->receiver_failsafe_timeout,
         config->receiver_threshold
     );
@@ -441,6 +688,7 @@ static esp_err_t glow_storage_mount_fat_partition(void)
 
 esp_err_t glow_storage_init(void)
 {
+    ESP_RETURN_ON_ERROR(glow_storage_load_schema(), TAG, "Schema load failed");
     ESP_RETURN_ON_ERROR(glow_storage_mount_fat_partition(), TAG, "FAT mount failed");
 
     char *nvs_json = malloc(GLOW_STORAGE_CONFIG_JSON_MAX_LEN);

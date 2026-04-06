@@ -6,6 +6,7 @@
 #include "esp_err.h"
 
 #define GLOW_STORAGE_CONFIG_JSON_MAX_LEN 1024
+#define GLOW_STORAGE_GLOW_FUNCTION_MAX_LEN 16
 #define GLOW_STORAGE_RECEIVER_TYPE_MAX_LEN 16
 
 typedef struct {
@@ -14,11 +15,17 @@ typedef struct {
 	float battery_crit_voltage;
 	uint8_t leds_num_leds;
 	float leds_brightness;
+	char glow_function[GLOW_STORAGE_GLOW_FUNCTION_MAX_LEN];
+	uint8_t glow_cut_off_thrs_pct;
+	uint8_t glow_max_ppm_pct;
+	float glow_max_voltage;
 	float glow_voltage;
 	float glow_boost;
 	float glow_boost_time;
 	char receiver_type[GLOW_STORAGE_RECEIVER_TYPE_MAX_LEN];
+	uint8_t receiver_channel;
 	float receiver_failsafe_timeout;
+	/* Deprecated compatibility mirror, equals glow_cut_off_thrs_pct. */
 	int receiver_threshold;
 } glow_device_config_t;
 

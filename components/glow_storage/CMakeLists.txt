@@ -2,5 +2,5 @@ set(priv_requires "glow_context" "fatfs" "wear_levelling" "esp_partition" "nvs_f
 
 idf_component_register(SRCS "glow_storage.c"
                     INCLUDE_DIRS "include"
-                    EMBED_TXTFILES "default.json"
+                    EMBED_TXTFILES "default.json" "default_schema.json"
                     PRIV_REQUIRES ${priv_requires})

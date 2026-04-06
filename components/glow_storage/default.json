@@ -1,4 +1,11 @@
 {
+    "core": {
+        "function": "onoff",
+        "cut_off_thrs%": 5,
+        "min_voltage": 0.8,
+        "max_ppm_%": 100,
+        "max_voltage": 3.3
+    },
     "battery": {
         "ncells": 0,
         "low_voltage": 3.2,
@@ -15,7 +22,6 @@
     },
     "receiver": {
         "type": "PPM",
-        "failsafe_timeout": 0.5,
-        "threshold": 50
+        "failsafe_timeout": 2
     }
 }

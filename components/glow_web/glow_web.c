@@ -65,6 +65,9 @@ static void glow_state_to_string(glow_system_state_t state, char *out_str, size_
 		case GLOW_STATE_BROKEN_WIRE:
 		strncpy(out_str, "BROKEN_WIRE", out_size);
 		break;
+	case GLOW_STATE_RC_LOST:
+		strncpy(out_str, "RC_LOST", out_size);
+		break;
 	case GLOW_STATE_ERROR:
 		strncpy(out_str, "ERROR", out_size);
 		break;

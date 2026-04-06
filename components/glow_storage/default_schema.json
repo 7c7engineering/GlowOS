@@ -11,7 +11,6 @@
     "glow": {
         "function": ["onoff", "scale"],
         "cut_off_thrs%": {"min": 0, "max": 100, "default": 5},
-        "min_voltage": {"min": 0.8, "max": 3.3, "default": 0.8},
         "max_ppm_%": {"min": 0, "max": 100, "default": 100},
         "max_voltage": {"min": 0.8, "max": 3.3, "default": 3.3},
         "voltage": {"min": 0.8, "max": 3.3, "default": 2.0},

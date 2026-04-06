@@ -248,7 +248,7 @@ void vtask_core(void *arg)
                 }
             }
             if (g_context->latest_measurement.rc_pwm_signal_valid &&
-                g_context->latest_measurement.rc_pwm_percentage > (uint32_t)s_core_config.receiver_threshold)
+                g_context->latest_measurement.rc_pwm_percentage > (uint32_t)s_core_config.glow_cut_off_thrs_pct)
             {
                 glow_core_goto_state(GLOW_STATE_BOOST);
             }
@@ -261,7 +261,7 @@ void vtask_core(void *arg)
             }
             // Check RC signal
             if (!g_context->latest_measurement.rc_pwm_signal_valid ||
-                g_context->latest_measurement.rc_pwm_percentage <= (uint32_t)s_core_config.receiver_threshold)
+                g_context->latest_measurement.rc_pwm_percentage <= (uint32_t)s_core_config.glow_cut_off_thrs_pct)
             {
                 glow_core_goto_state(GLOW_STATE_OFF);
             }
@@ -275,7 +275,7 @@ void vtask_core(void *arg)
         case GLOW_STATE_GLOWING:
             // Check RC signal - if signal is lost or drops below threshold, turn off glow plug
             if (!g_context->latest_measurement.rc_pwm_signal_valid ||
-                g_context->latest_measurement.rc_pwm_percentage <= (uint32_t)s_core_config.receiver_threshold)
+                g_context->latest_measurement.rc_pwm_percentage <= (uint32_t)s_core_config.glow_cut_off_thrs_pct)
             {
                 glow_core_goto_state(GLOW_STATE_OFF);
             }
